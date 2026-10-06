@@ -1,0 +1,12 @@
+package repository
+
+import (
+	"context"
+	"{{MODULE_NAME}}/internal/domain/entity"
+)
+
+type SampleRepository interface {
+	FindByID(ctx context.Context, id entity.ID) (*entity.Sample, error)
+	FindAll(ctx context.Context) ([]*entity.Sample, error)
+	Save(ctx context.Context, sample *entity.Sample) error
+}

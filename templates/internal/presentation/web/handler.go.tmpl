@@ -1,0 +1,46 @@
+package web
+
+import (
+	"fmt"
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"{{MODULE_NAME}}/internal/usecase"
+)
+
+type Handler struct {
+	sampleUsecase *usecase.SampleUsecase
+}
+
+func NewHandler(sampleUsecase *usecase.SampleUsecase) *Handler {
+	return &Handler{sampleUsecase: sampleUsecase}
+}
+
+func (h *Handler) Index(c *gin.Context) {
+	items, err := h.sampleUsecase.List(c.Request.Context())
+	if err != nil {
+		c.String(http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	c.HTML(http.StatusOK, "base.html", gin.H{
+		"Title": "{{MODULE_NAME}}",
+		"Items": items,
+	})
+}
+
+func (h *Handler) CreateItem(c *gin.Context) {
+	val := c.PostForm("value")
+	id := uuid.New().String()[:8]
+
+	if err := h.sampleUsecase.Execute(c.Request.Context(), id, val); err != nil {
+		c.String(http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// HTMX用 パーシャルHTMLスニペットを直接返却
+	htmlSnippet := fmt.Sprintf(`<article id="item-%s"><strong>%s</strong>: %s</article>`, id, id, val)
+	c.Header("Content-Type", "text/html; charset=utf-8")
+	c.String(http.StatusCreated, htmlSnippet)
+}

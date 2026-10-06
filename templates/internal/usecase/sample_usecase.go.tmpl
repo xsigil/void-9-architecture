@@ -1,0 +1,33 @@
+package usecase
+
+import (
+	"context"
+	"fmt"
+
+	"{{MODULE_NAME}}/internal/domain/entity"
+	"{{MODULE_NAME}}/internal/domain/repository"
+)
+
+type SampleUsecase struct {
+	repo      repository.SampleRepository
+	txManager repository.TxManager
+}
+
+func NewSampleUsecase(repo repository.SampleRepository, txManager repository.TxManager) *SampleUsecase {
+	return &SampleUsecase{repo: repo, txManager: txManager}
+}
+
+func (u *SampleUsecase) List(ctx context.Context) ([]*entity.Sample, error) {
+	return u.repo.FindAll(ctx)
+}
+
+func (u *SampleUsecase) Execute(ctx context.Context, rawID string, val string) error {
+	sample, err := entity.NewSample(entity.ID(rawID), val)
+	if err != nil {
+		return fmt.Errorf("domain rule violation: %w", err)
+	}
+
+	return u.txManager.Do(ctx, func(txCtx context.Context) error {
+		return u.repo.Save(txCtx, sample)
+	})
+}

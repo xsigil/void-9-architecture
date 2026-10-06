@@ -1,0 +1,26 @@
+package sqlite3
+
+import (
+	"context"
+	"fmt"
+    "os"
+	"path/filepath"
+	"github.com/jmoiron/sqlx"
+	_ "modernc.org/sqlite"
+)
+
+// templates/internal/infrastructure/sqlite3/db.go.tmpl
+
+func NewDB(ctx context.Context, dbPath string) (*sqlx.DB, error) {
+    // data ディレクトリが未作成なら自動生成
+    if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+        return nil, fmt.Errorf("failed to create db directory: %w", err)
+    }
+
+    dsn := fmt.Sprintf("%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(ON)", dbPath)
+    db, err := sqlx.ConnectContext(ctx, "sqlite", dsn)
+    if err != nil {
+        return nil, fmt.Errorf("failed to open sqlite: %w", err)
+    }
+	return db, nil
+}

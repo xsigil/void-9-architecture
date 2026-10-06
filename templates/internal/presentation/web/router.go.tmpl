@@ -1,0 +1,26 @@
+package web
+
+import (
+	"html/template"
+	"io/fs"
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+)
+
+func SetupRouter(handler *Handler, webFS fs.FS) *gin.Engine {
+	r := gin.Default()
+
+	// 埋め込み静的ファイルの提供
+	staticFS, _ := fs.Sub(webFS, "static")
+	r.StaticFS("/static", http.FS(staticFS))
+
+	// 埋め込みHTMLテンプレートのパース
+	tmpl := template.Must(template.ParseFS(webFS, "templates/*.html"))
+	r.SetHTMLTemplate(tmpl)
+
+	r.GET("/", handler.Index)
+	r.POST("/items", handler.CreateItem)
+
+	return r
+}

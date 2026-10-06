@@ -1,0 +1,63 @@
+package sqlite3
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+
+	"github.com/jmoiron/sqlx"
+	"{{MODULE_NAME}}/internal/domain/entity"
+)
+
+type sampleModel struct {
+	ID    string `db:"id"`
+	Value string `db:"value"`
+}
+
+type SampleRepository struct {
+	db *sqlx.DB
+}
+
+func NewSampleRepository(db *sqlx.DB) *SampleRepository {
+	return &SampleRepository{db: db}
+}
+
+func (r *SampleRepository) FindAll(ctx context.Context) ([]*entity.Sample, error) {
+	conn := GetExtContext(ctx, r.db)
+	var list []sampleModel
+	query := `SELECT id, value FROM samples ORDER BY rowid DESC`
+	if err := sqlx.SelectContext(ctx, conn, &list, query); err != nil {
+		return nil, fmt.Errorf("failed to list samples: %w", err)
+	}
+
+	results := make([]*entity.Sample, 0, len(list))
+	for _, m := range list {
+		results = append(results, &entity.Sample{ID: entity.ID(m.ID), Value: m.Value})
+	}
+	return results, nil
+}
+
+func (r *SampleRepository) FindByID(ctx context.Context, id entity.ID) (*entity.Sample, error) {
+	conn := GetExtContext(ctx, r.db)
+	var model sampleModel
+	query := `SELECT id, value FROM samples WHERE id = ?`
+	if err := sqlx.GetContext(ctx, conn, &model, query, string(id)); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get sample: %w", err)
+	}
+	return &entity.Sample{ID: entity.ID(model.ID), Value: model.Value}, nil
+}
+
+func (r *SampleRepository) Save(ctx context.Context, s *entity.Sample) error {
+	conn := GetExtContext(ctx, r.db)
+	query := `INSERT INTO samples (id, value) VALUES (:id, :value)
+              ON CONFLICT(id) DO UPDATE SET value = excluded.value`
+	model := sampleModel{ID: string(s.ID), Value: s.Value}
+	if _, err := sqlx.NamedExecContext(ctx, conn, query, model); err != nil {
+		return fmt.Errorf("failed to upsert sample: %w", err)
+	}
+	return nil
+}

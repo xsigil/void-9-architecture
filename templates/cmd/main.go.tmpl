@@ -1,0 +1,67 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"{{MODULE_NAME}}/internal/infrastructure/sqlite3"
+	presentationWeb "{{MODULE_NAME}}/internal/presentation/web"
+	"{{MODULE_NAME}}/internal/usecase"
+	"{{MODULE_NAME}}/web"
+)
+
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	fmt.Println("[*] Booting Web Server (Gin + HTMX + Alpine + Pico)...")
+    // templates/cmd/main.go.tmpl
+
+    dbPath := os.Getenv("DB_PATH")
+    if dbPath == "" {
+    dbPath = "data/app.db"
+    }
+
+    db, err := sqlite3.NewDB(ctx, dbPath)
+    if err != nil {
+    fmt.Fprintf(os.Stderr, "failed to materialize persistence: %v\n", err)
+    os.Exit(1)
+    }
+    defer db.Close()
+
+	// インフラ & Usecase
+	txManager := sqlite3.NewTxManager(db)
+	sampleRepo := sqlite3.NewSampleRepository(db)
+	appUsecase := usecase.NewSampleUsecase(sampleRepo, txManager)
+
+	// Web層 (web.Files を注入)
+	h := presentationWeb.NewHandler(appUsecase)
+	r := presentationWeb.SetupRouter(h, web.Files)
+
+	srv := &http.Server{
+		Addr:    ":8080",
+		Handler: r,
+	}
+
+	go func() {
+		fmt.Println("[*] Server running at http://localhost:8080")
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			fmt.Fprintf(os.Stderr, "listen error: %v\n", err)
+		}
+	}()
+
+	<-ctx.Done()
+	fmt.Println("\n[*] Shutting down server gracefully...")
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		fmt.Fprintf(os.Stderr, "server shutdown forced: %v\n", err)
+	}
+}

@@ -1,0 +1,40 @@
+{{ define "content" }}
+<header>
+    <h1>{{ .Title }}</h1>
+    <p>Powered by Gin + sqlx + HTMX + Alpine.js + Pico.css</p>
+</header>
+
+<section>
+    <h2>Add Sample Item</h2>
+    <!-- HTMX による非同期 POST 送信とターゲット置換 -->
+    <form hx-post="/items" hx-target="#item-list" hx-swap="beforeend" hx-on::after-request="this.reset()">
+        <fieldset role="group">
+            <input type="text" name="value" placeholder="Enter value..." required>
+            <button type="submit">Submit</button>
+        </fieldset>
+    </form>
+</section>
+
+<!-- Alpine.js によるクライアント側のリアクティブ制御例 -->
+<section x-data="{ open: false }">
+    <button @click="open = !open" class="secondary outline">Toggle Quick Note</button>
+    <div x-show="open" style="margin-top: 1rem;" x-transition>
+        <article>
+            This block is toggled purely via Alpine.js on the client side without server roundtrips.
+        </article>
+    </div>
+</section>
+
+<section>
+    <h2>Stored Items</h2>
+    <div id="item-list">
+        {{ range .Items }}
+            <article id="item-{{ .ID }}">
+                <strong>{{ .ID }}</strong>: {{ .Value }}
+            </article>
+        {{ else }}
+            <p>No items registered yet.</p>
+        {{ end }}
+    </div>
+</section>
+{{ end }}

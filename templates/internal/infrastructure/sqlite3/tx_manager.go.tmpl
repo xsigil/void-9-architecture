@@ -1,0 +1,50 @@
+package sqlite3
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+
+	"github.com/jmoiron/sqlx"
+	"{{MODULE_NAME}}/internal/domain/repository"
+)
+
+type txContextKey struct{}
+
+type TxManager struct {
+	db *sqlx.DB
+}
+
+func NewTxManager(db *sqlx.DB) *TxManager {
+	return &TxManager{db: db}
+}
+
+// Do は渡された関数（functor）をトランザクション内で実行し、Context を通じて Tx を伝播する
+func (m *TxManager) Do(ctx context.Context, fn repository.TxFunc) error {
+	tx, err := m.db.BeginTxx(ctx, &sql.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to begin tx: %w", err)
+	}
+
+	txCtx := context.WithValue(ctx, txContextKey{}, tx)
+
+	if err := fn(txCtx); err != nil {
+		if rbErr := tx.Rollback(); rbErr != nil {
+			return fmt.Errorf("tx error: %v, rollback error: %w", err, rbErr)
+		}
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit tx: %w", err)
+	}
+	return nil
+}
+
+// ExtContextGetter は context 内に Tx があれば返し、無ければ元の *sqlx.DB を返す
+func GetExtContext(ctx context.Context, db *sqlx.DB) sqlx.ExtContext {
+	if tx, ok := ctx.Value(txContextKey{}).(*sqlx.Tx); ok {
+		return tx
+	}
+	return db
+}

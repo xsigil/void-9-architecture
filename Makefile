@@ -18,7 +18,7 @@ all: build
 build:
 	@mkdir -p $(BIN_DIR)
 	@printf "[*] Compiling pure static void binary...\n"
-	go build $(GO_BUILD_FLAGS) -o $(TARGET) $(SRC)
+	go build $(GO_BUILD_FLAGS) -o $(TARGET) .
 	@printf "[+] Built successfully: %s (%s)\n" "$(TARGET)" "$$(du -h $(TARGET) | cut -f1)"
 
 ## install: Install binary to $(PREFIX)/bin/void (requires sudo if default prefix)

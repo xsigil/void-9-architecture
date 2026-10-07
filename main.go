@@ -165,8 +165,20 @@ func handleScaffold(appDir string) {
 }
 
 func handleLdd(execPath, libDir string) {
-	fmt.Printf("[*] void ldd: resolving %s -> %s (stub)\n", execPath, libDir)
-	// TODO: Phase 2 で ELF 解析と再帰的 .so 収集を実装
+	fmt.Printf("[+] Analyzing ELF dynamic dependencies for: %s\n", execPath)
+	fmt.Printf("[+] Target library collection directory: %s\n", libDir)
+
+	if err := os.MkdirAll(libDir, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "[-] Failed to prepare lib directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := ResolveAndCollectLibraries(execPath, libDir); err != nil {
+		fmt.Fprintf(os.Stderr, "[-] Dependency resolution failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("[+] Dynamic dependencies successfully materialized.")
 }
 
 func handleJail(args []string) {

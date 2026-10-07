@@ -194,6 +194,8 @@ func handleJail(args []string) {
 }
 
 func handleExport(args []string) {
-	fmt.Printf("[*] void export: packaging rootfs standalone (stub)\n")
-	// TODO: Phase 4 で tarball / rootfs 出力を実装
+	if err := RunExport(args); err != nil {
+		fmt.Fprintf(os.Stderr, "[-] Void export error: %v\n", err)
+		os.Exit(1)
+	}
 }

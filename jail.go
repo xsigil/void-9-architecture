@@ -70,10 +70,7 @@ func RunJail(args []string) error {
 
 	posArgs := fs.Args()
 	if len(posArgs) < 1 {
-		return fmt.Errorf("target executable required\nUsage: void jail [--bind=<src>:<dst>[:ro],...] --lib <lib dir> <exec> [args...]")
-	}
-	if *libDir == "" {
-		return fmt.Errorf("--lib <lib dir> is required")
+		return fmt.Errorf("target executable required\nUsage: void jail [--bind=<src>:<dst>[:ro],...] [--lib <lib dir>] <exec> [args...]")
 	}
 
 	execBin, err := filepath.Abs(posArgs[0])
@@ -81,9 +78,12 @@ func RunJail(args []string) error {
 		return fmt.Errorf("failed to resolve target binary: %w", err)
 	}
 
-	absLibDir, err := filepath.Abs(*libDir)
-	if err != nil {
-		return fmt.Errorf("failed to resolve lib dir: %w", err)
+	var absLibDir string
+	if *libDir != "" {
+		absLibDir, err = filepath.Abs(*libDir)
+		if err != nil {
+			return fmt.Errorf("failed to resolve lib dir: %w", err)
+		}
 	}
 
 	mounts, err := parseBindFlags(*bindStr)

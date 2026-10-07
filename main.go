@@ -7,11 +7,9 @@ package main
 
 import (
 	"embed"
-	"flag"
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -20,74 +18,22 @@ import (
 //go:embed all:templates scripts/*
 var embeddedAssets embed.FS
 
-// Default jail script embedded as fallback and canonical export source
-const defaultJailScript = `#!/usr/bin/env bash
-# Void Architecture™ Kernel Confinement Perimeter
-# Volatile RAM Jail (tmpfs + unshare + chroot + /data conduit)
-set -euo pipefail
-
-JAIL_DIR="${JAIL_DIR:-/run/void-jail}"
-APP_BIN="${APP_BIN:-./bin/app}"
-HOST_DATA_DIR="${HOST_DATA_DIR:-$(pwd)/data}"
-TMPFS_SIZE="${TMPFS_SIZE:-64M}"
-
-if [[ $EUID -ne 0 ]]; then
-    echo "[-] Void containment requires root (sudo) privileges." >&2
-    exit 1
-fi
-
-if [[ ! -f "${APP_BIN}" ]]; then
-    echo "[-] Target executable ${APP_BIN} not found." >&2
-    exit 1
-fi
-
-echo "[*] Materializing volatile memory jail at ${JAIL_DIR} (${TMPFS_SIZE} tmpfs)..."
-mkdir -p "${JAIL_DIR}"
-mount -t tmpfs -o "size=${TMPFS_SIZE},nodev,nosuid" tmpfs "${JAIL_DIR}"
-
-mkdir -p "${JAIL_DIR}"/{bin,data,lib,lib64,proc,dev,etc,tmp}
-cp "${APP_BIN}" "${JAIL_DIR}/bin/app"
-chmod 755 "${JAIL_DIR}/bin/app"
-
-# Minimal device nodes
-mknod -m 666 "${JAIL_DIR}/dev/null" c 1 3 2>/dev/null || true
-mknod -m 666 "${JAIL_DIR}/dev/zero" c 1 5 2>/dev/null || true
-mknod -m 666 "${JAIL_DIR}/dev/urandom" c 1 9 2>/dev/null || true
-
-# Minimal identity & resolver configurations
-[[ -f /etc/resolv.conf ]] && cp -a /etc/resolv.conf "${JAIL_DIR}/etc/" 2>/dev/null || true
-
-# The Single Conduit: Bind mount host SQLite data directory (/data only)
-echo "[*] Projecting single state conduit: ${HOST_DATA_DIR} -> /data..."
-mkdir -p "${HOST_DATA_DIR}"
-mount --bind "${HOST_DATA_DIR}" "${JAIL_DIR}/data"
-
-cleanup() {
-    echo -e "\n[*] Collapsing Void jail back to non-existence..."
-    umount -l "${JAIL_DIR}/data" 2>/dev/null || true
-    umount -l "${JAIL_DIR}" 2>/dev/null || true
-    rm -rf "${JAIL_DIR}"
-    echo "[*] Containment dissolved. 0 bytes persistent on host."
-}
-trap cleanup EXIT INT TERM
-
-echo "[*] Executing binary in unshared kernel namespaces (NEWNS, NEWPID, NEWIPC, NEWUTS)..."
-unshare --mount --pid --ipc --uts --fork chroot "${JAIL_DIR}" /bin/app
-`
-
 func printHelp() {
 	fmt.Println(`Void Sovereign Engine (void)
 Hyper-Minimalist Sovereign Architecture & Confinement Perimeter
 
 USAGE:
-  void <app-name>                     Scaffold a pure DDD Void web application
-  void export                         Export transparent unshare/chroot jail bash script
-  void jail <binary> [--bind=<path>]  Execute binary inside volatile unshare/chroot RAM jail
+  void scaffold <app dir>
+  void ldd <linked executable> <lib dir>
+  void jail [--bind=<src>:<dst>[:ro],...] --lib <lib dir> <exec> [args...]
+  void export [--bind=<src>:<dst>[:ro],...] --lib <lib dir> --output <tarball|dir> <exec>
 
-EXAMPLES:
-  void sovereign-core
-  void export > run_jail.sh
-  sudo void jail ./bin/app --bind=/srv/app/data`)
+SUBCOMMANDS:
+  scaffold  Generate a pure DDD Void skeleton directory tree
+  ldd       Recursively resolve and collect dynamic ELF libraries and loader
+  jail      Execute target binary inside volatile unshare/chroot RAM jail
+  export    Package self-contained standalone rootfs archive or directory
+`)
 }
 
 func main() {
@@ -96,86 +42,62 @@ func main() {
 		os.Exit(1)
 	}
 
-	cmd := os.Args[1]
-
-	switch cmd {
-	case "export":
-		handleExport()
-	case "jail":
-		handleJail(os.Args[2:])
-	case "-h", "--help", "help":
-		printHelp()
-	default:
-		// Any positional string argument is treated as the project target name
-		if strings.HasPrefix(cmd, "-") {
-			fmt.Printf("[-] Unknown option: %s\n", cmd)
-			printHelp()
+	switch os.Args[1] {
+	case "scaffold":
+		if len(os.Args) < 3 {
+			fmt.Fprintln(os.Stderr, "[-] Error: <app dir> argument required.")
+			fmt.Fprintln(os.Stderr, "    Usage: void scaffold <app dir>")
 			os.Exit(1)
 		}
-		scaffoldProject(cmd)
-	}
-}
+		handleScaffold(os.Args[2])
 
-func handleExport() {
-	// Try reading embedded script if present, otherwise fallback to default string
-	data, err := embeddedAssets.ReadFile("scripts/run_jail.sh")
-	if err == nil && len(data) > 0 {
-		os.Stdout.Write(data)
-		return
-	}
-	fmt.Print(defaultJailScript)
-}
+	case "ldd":
+		if len(os.Args) < 4 {
+			fmt.Fprintln(os.Stderr, "[-] Error: <linked executable> and <lib dir> required.")
+			fmt.Fprintln(os.Stderr, "    Usage: void ldd <linked executable> <lib dir>")
+			os.Exit(1)
+		}
+		handleLdd(os.Args[2], os.Args[3])
 
-func handleJail(args []string) {
-	fsFlags := flag.NewFlagSet("jail", flag.ExitOnError)
-	bindPath := fsFlags.String("bind", "./data", "Host directory for persistent SQLite /data conduit")
-	tmpfsSize := fsFlags.String("size", "64M", "Size of volatile tmpfs RAM filesystem")
-	fsFlags.Parse(args)
+	case "jail":
+		handleJail(os.Args[2:])
 
-	targets := fsFlags.Args()
-	if len(targets) < 1 {
-		fmt.Println("[-] Error: target executable binary required.")
-		fmt.Println("    Usage: void jail <binary> [--bind=./data] [--size=64M]")
-		os.Exit(1)
-	}
+	case "export":
+		handleExport(os.Args[2:])
 
-	targetBin, err := filepath.Abs(targets[0])
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "[-] Failed to resolve binary path: %v\n", err)
-		os.Exit(1)
-	}
+	case "-h", "--help", "help":
+		printHelp()
 
-	absBind, err := filepath.Abs(*bindPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "[-] Failed to resolve bind path: %v\n", err)
-		os.Exit(1)
-	}
-
-	scriptContent := defaultJailScript
-	if data, err := embeddedAssets.ReadFile("scripts/run_jail.sh"); err == nil && len(data) > 0 {
-		scriptContent = string(data)
-	}
-
-	cmd := exec.Command("bash", "-c", scriptContent)
-	cmd.Env = append(os.Environ(),
-		fmt.Sprintf("APP_BIN=%s", targetBin),
-		fmt.Sprintf("HOST_DATA_DIR=%s", absBind),
-		fmt.Sprintf("TMPFS_SIZE=%s", *tmpfsSize),
-	)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "[-] Void jail execution finished: %v\n", err)
+	default:
+		fmt.Fprintf(os.Stderr, "[-] Unknown subcommand: %s\n", os.Args[1])
+		printHelp()
 		os.Exit(1)
 	}
 }
 
-func scaffoldProject(appName string) {
+func handleScaffold(appDir string) {
 	start := time.Now()
-	fmt.Printf("[+] Materializing Void Sovereign Architecture for: %s\n", appName)
+	appName := filepath.Base(appDir)
+	fmt.Printf("[+] Materializing Void Sovereign Architecture for: %s (%s)\n", appName, appDir)
 
+	// SPEC.md に定義された骨格ディレクトリを生成
+	dirs := []string{
+		filepath.Join(appDir, "bin"),
+		filepath.Join(appDir, "lib"),
+		filepath.Join(appDir, "rootfs", "dev"),
+		filepath.Join(appDir, "rootfs", "proc"),
+		filepath.Join(appDir, "rootfs", "etc"),
+		filepath.Join(appDir, "rootfs", "tmp"),
+	}
+
+	for _, d := range dirs {
+		if err := os.MkdirAll(d, 0755); err != nil {
+			fmt.Fprintf(os.Stderr, "[-] Failed to create directory %s: %v\n", d, err)
+			os.Exit(1)
+		}
+	}
+
+	// 埋め込みテンプレートファイルの展開
 	templatePrefix := "templates"
 	entriesFound := 0
 
@@ -192,9 +114,8 @@ func scaffoldProject(appName string) {
 			return err
 		}
 
-		// Strip .tmpl suffix if present for destination filenames
 		destRelPath := strings.TrimSuffix(relPath, ".tmpl")
-		destPath := filepath.Join(appName, destRelPath)
+		destPath := filepath.Join(appDir, destRelPath)
 
 		if d.IsDir() {
 			return os.MkdirAll(destPath, 0755)
@@ -205,14 +126,12 @@ func scaffoldProject(appName string) {
 			return fmt.Errorf("failed to read template %s: %w", path, err)
 		}
 
-		// Replace {{MODULE_NAME}} placeholder
 		content := strings.ReplaceAll(string(data), "{{MODULE_NAME}}", appName)
 
 		if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
 			return err
 		}
 
-		// Determine executable permissions
 		perm := os.FileMode(0644)
 		if strings.HasSuffix(destRelPath, ".sh") {
 			perm = 0755
@@ -232,13 +151,30 @@ func scaffoldProject(appName string) {
 		os.Exit(1)
 	}
 
-	if entriesFound == 0 {
-		fmt.Fprintf(os.Stderr, "[-] Warning: No templates found in embedded filesystem under %s/\n", templatePrefix)
+	// Voidfile の初期配置 (SPEC.md 準拠)
+	voidfilePath := filepath.Join(appDir, "Voidfile")
+	if _, err := os.Stat(voidfilePath); os.IsNotExist(err) {
+		defaultVoidfile := fmt.Sprintf("# Voidfile: %s\nEXEC=./bin/%s\nLIB=./lib\n", appName, appName)
+		_ = os.WriteFile(voidfilePath, []byte(defaultVoidfile), 0644)
 	}
 
 	duration := time.Since(start)
 	fmt.Printf("\n[+] Void architecture materialized successfully in %v.\n", duration)
-	fmt.Printf("    cd %s\n", appName)
+	fmt.Printf("    cd %s\n", appDir)
 	fmt.Printf("    go mod tidy\n")
-	fmt.Printf("    go run .\n")
+}
+
+func handleLdd(execPath, libDir string) {
+	fmt.Printf("[*] void ldd: resolving %s -> %s (stub)\n", execPath, libDir)
+	// TODO: Phase 2 で ELF 解析と再帰的 .so 収集を実装
+}
+
+func handleJail(args []string) {
+	fmt.Printf("[*] void jail: launching unshared perimeter (stub)\n")
+	// TODO: Phase 3 で jail 実行引数パースと隔離実行を実装
+}
+
+func handleExport(args []string) {
+	fmt.Printf("[*] void export: packaging rootfs standalone (stub)\n")
+	// TODO: Phase 4 で tarball / rootfs 出力を実装
 }

@@ -14,7 +14,7 @@
 Contemporary software engineering has conflated structural complexity with scalability. Production systems routinely collapse under layered taxes: multi-gigabyte container base images, sprawling client build pipelines (`node_modules`), serialization penalties across external database sockets, and daemon escape vectors.
 
 **Void Architecture™** enforces an uncompromising counter-paradigm:
-* **Zero Build-Step Frontend**: Pure hypermedia via Gin, [htmx](https://htmx.org), [Alpine.js](https://alpinejs.dev), and classless [Pico.css](https://picocss.com) embedded via `//go:embed`.
+* **Zero Build-Step Frontend**: Pure hypermedia via Gin, [htmx](https://htmx.org), [Alpine.js](https://alpinejs.dev), and classless [Pico.css](https://picocss.com) served directly or embedded via `//go:embed`.
 * **Zero-CGO Pure Go Persistence**: In-process SQLite3 under Write-Ahead Logging (`modernc.org/sqlite`) compiled as a single static executable (`CGO_ENABLED=0`).
 * **Domain Purity (DDD)**: Explicit `TxManager` ACID boundaries, aggregate invariants, and repository contracts.
 * **The Single Conduit**: The application runs entirely within volatile physical RAM (`tmpfs`). Only `/data` is projected to host non-volatile storage. Upon process termination, the containment perimeter dissolves into zero persistent bytes.
@@ -53,8 +53,9 @@ Contemporary software engineering has conflated structural complexity with scala
                               │
             ┌─────────────────▼─────────────────┐
             │ Host Persistent Storage (/data)   │
-            │          app.db (WAL)             │
+            │          app.sqlite3 (WAL)        │
             └───────────────────────────────────┘
+
 ```
 
 ---
@@ -64,7 +65,7 @@ Contemporary software engineering has conflated structural complexity with scala
 Clone and compile the pure static `void` engine:
 
 ```bash
-git clone https://github.com/parorafia/void-9-architecture.git
+git clone [https://github.com/parorafia/void-9-architecture.git](https://github.com/parorafia/void-9-architecture.git)
 cd void-9-architecture
 
 # Compile pure static binary to ./bin/void
@@ -72,63 +73,106 @@ make
 
 # Install to /usr/local/bin/void
 sudo make install
+
 ```
 
 ---
 
 ## 4. CLI Usage
 
-The `void` CLI is minimalist, transparent, and strictly aligned with the Unix philosophy.
+The `void` CLI provides a unified 4-phase lifecycle for building, isolating, and distributing standalone applications.
 
 ```text
 Void Sovereign Engine (void)
 Hyper-Minimalist Sovereign Architecture & Confinement Perimeter
 
 USAGE:
-  void <app-name>                     Scaffold a pure DDD Void web application
-  void export                         Export transparent unshare/chroot jail bash script
-  void jail <binary> [--bind=<path>]  Execute binary inside volatile unshare/chroot RAM jail
+  void scaffold <dir>                              Scaffold a pure DDD Void web application
+  void ldd <binary> <output-dir>                   Recursively collect ELF dependencies & ld loader
+  void jail [--bind=...] [--lib=...] <binary>      Execute binary inside volatile unshare/chroot RAM jail
+  void export [--bind=...] [--lib=...] --output=.. Package rootfs directory or standalone .tar.gz
+
 ```
 
 ### 4.1. Scaffold a New Web Application
+
 Materialize a complete Clean DDD architecture in sub-millisecond time:
 
 ```bash
-void sentinel-core
+void scaffold sentinel-core
 cd sentinel-core
 go mod tidy
+
 ```
 
 ### 4.2. Run Locally in Development
-Execute with zero build step and instantaneous startup (<18MB RSS):
+
+Execute with zero build step and instantaneous startup:
 
 ```bash
 # Initialize SQLite schema
 mkdir -p data
-sqlite3 data/app.db < migrations/001_init.sql
+sqlite3 data/app.sqlite3 < migrations/001_init.sql
 
 # Run pure Go server
 make run
+
 ```
+
 Visit: `http://localhost:8080`
 
-### 4.3. Launch Inside Ephemeral RAM Jail
-Build a pure static binary and launch inside Linux namespaces:
+### 4.3. Launch Inside Ephemeral RAM Jail (`void jail`)
+
+Run applications in an unshared namespace (`CLONE_NEWNS`, `CLONE_NEWPID`, `CLONE_NEWIPC`, `CLONE_NEWUTS`) backed entirely by volatile `tmpfs`.
+
+#### Pure Static Binary (Go)
 
 ```bash
-# 1. Compile pure static binary (CGO_ENABLED=0)
+# Compile pure static binary (CGO_ENABLED=0)
 make build
 
-# 2. Contain binary in RAM tmpfs with persistent state mapped strictly to ./data
-sudo void jail ./bin/sentinel-core --bind=./data
+# Launch with selective projection (web assets as read-only, data directory as read-write)
+sudo void jail \
+  --bind=./web:/web:ro,./data:/data \
+  ./bin/sentinel-core
+
 ```
 
-### 4.4. Inspect or Customize the Kernel Jail
-Eject the embedded confinement script to stdout for security auditing or custom infrastructure orchestration:
+#### Dynamic / C++ ELF Binaries
+
+For binaries requiring external dynamic linkers and shared libraries:
 
 ```bash
-void export > run_jail.sh
-chmod +x run_jail.sh
+# 1. Recursively trace and harvest ELF dependencies
+void ldd /usr/bin/mecab ./lib
+
+# 2. Project libraries and configuration into volatile jail
+sudo void jail \
+  --lib ./lib \
+  --bind=/etc/mecabrc:/etc/mecabrc:ro,/usr/lib/mecab:/usr/lib/mecab:ro \
+  /usr/bin/mecab
+
+```
+
+### 4.4. Package Standalone Images (`void export`)
+
+Assemble a fully self-contained rootfs directory or `.tar.gz` archive for deployment onto pristine Linux hosts:
+
+```bash
+# Export as a compressed tarball
+void export \
+  --lib ./lib \
+  --bind=./web:/web:ro,./data:/data \
+  --output sentinel-core-standalone.tar.gz \
+  ./bin/sentinel-core
+
+# Or assemble as a raw rootfs directory
+void export \
+  --lib ./lib \
+  --bind=/etc/mecabrc:/etc/mecabrc:ro,/usr/lib/mecab:/usr/lib/mecab:ro \
+  --output ./mecab_rootfs \
+  /usr/bin/mecab
+
 ```
 
 ---
@@ -136,7 +180,7 @@ chmod +x run_jail.sh
 ## 5. Systemic Performance Metrics
 
 | Metric | Void Architecture™ | Standard Web Stack (Node + React + Postgres + K8s) |
-| :--- | :--- | :--- |
+| --- | --- | --- |
 | **Cold Start Latency** | **$< 5\text{ms}$** | $3,000\text{ms} - 15,000\text{ms}$ |
 | **Idle Memory (RSS)** | **$\approx 18\text{MB}$ total** | $650\text{MB} - 1.8\text{GB}$ |
 | **External Dependencies** | **$< 10$ audited Go modules** | $> 1,800$ `npm` packages + container layers |
@@ -158,5 +202,6 @@ chmod +x run_jail.sh
 
 ## 7. License
 
-Released under the **MIT License**.  
-Engineered by **parorafia** ([@xsigil](https://github.com/xsigil)).
+Released under the **MIT License**.
+
+Engineered by **parorafia** ([@xsigil](https://www.google.com/search?q=https://github.com/xsigil)).

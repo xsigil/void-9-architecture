@@ -25,7 +25,7 @@ func main() {
 
     dbPath := os.Getenv("DB_PATH")
     if dbPath == "" {
-    dbPath = "data/app.db"
+    dbPath = "data/app.sqlite3"
     }
 
     db, err := sqlite3.NewDB(ctx, dbPath)

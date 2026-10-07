@@ -187,8 +187,10 @@ func handleLdd(execPath, libDir string) {
 }
 
 func handleJail(args []string) {
-	fmt.Printf("[*] void jail: launching unshared perimeter (stub)\n")
-	// TODO: Phase 3 で jail 実行引数パースと隔離実行を実装
+	if err := RunJail(args); err != nil {
+		fmt.Fprintf(os.Stderr, "[-] Void jail execution error: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 func handleExport(args []string) {

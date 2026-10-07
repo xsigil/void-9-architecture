@@ -38,14 +38,20 @@ mknod -m 666 "${JAIL_DIR}/dev/urandom" c 1 9 2>/dev/null || true
 # 4. リゾルバの複製
 [[ -f /etc/resolv.conf ]] && cp -a /etc/resolv.conf "${JAIL_DIR}/etc/" 2>/dev/null || true
 
-# 5. ldd で集めたライブラリ群を透過バインド (Read-Only)
+# 5. ldd で集めたライブラリ群をバインド (まずは RW のままマウント)
 LIB_DIR="{{ .LibDir }}"
 if [[ -d "${LIB_DIR}" ]]; then
-    for subdir in usr lib lib64; do
-        if [[ -d "${LIB_DIR}/${subdir}" ]]; then
-            mkdir -p "${JAIL_DIR}/${subdir}"
-            mount --bind "${LIB_DIR}/${subdir}" "${JAIL_DIR}/${subdir}"
-            mount -o remount,ro,bind "${JAIL_DIR}/${subdir}"
+    if [[ -d "${LIB_DIR}/usr" ]]; then
+        mkdir -p "${JAIL_DIR}/usr"
+        mount --bind "${LIB_DIR}/usr" "${JAIL_DIR}/usr"
+    fi
+
+    for dir in lib lib64; do
+        if [[ -d "${LIB_DIR}/${dir}" ]]; then
+            mkdir -p "${JAIL_DIR}/${dir}"
+            mount --bind "${LIB_DIR}/${dir}" "${JAIL_DIR}/${dir}"
+        elif [[ -d "${JAIL_DIR}/usr/${dir}" && ! -e "${JAIL_DIR}/${dir}" ]]; then
+            ln -s "usr/${dir}" "${JAIL_DIR}/${dir}"
         fi
     done
 fi
@@ -54,12 +60,31 @@ fi
 cp "{{ .ExecBin }}" "${JAIL_DIR}/bin/app"
 chmod 755 "${JAIL_DIR}/bin/app"
 
-# 7. ユーザー指定のバインドマウント投影
+# 7. ユーザー指定のバインドマウント投影 (マウント作成)
 {{- range .BindMounts }}
-mkdir -p "${JAIL_DIR}/{{ .Dst }}"
-mount --bind "{{ .Src }}" "${JAIL_DIR}/{{ .Dst }}"
+if [[ -d "{{ .Src }}" ]]; then
+    mkdir -p "${JAIL_DIR}/{{ .Dst }}"
+    mount --bind "{{ .Src }}" "${JAIL_DIR}/{{ .Dst }}"
+elif [[ -f "{{ .Src }}" ]]; then
+    mkdir -p "$(dirname "${JAIL_DIR}/{{ .Dst }}")"
+    touch "${JAIL_DIR}/{{ .Dst }}"
+    mount --bind "{{ .Src }}" "${JAIL_DIR}/{{ .Dst }}"
+else
+    echo "[-] Error: Bind source does not exist: {{ .Src }}" >&2
+    exit 1
+fi
+{{- end }}
+
+# 8. すべてのマウント完了後に Read-Only 属性を一括適用
+if [[ -d "${LIB_DIR}" ]]; then
+    [[ -d "${LIB_DIR}/usr" ]] && mount -o remount,ro,bind "${JAIL_DIR}/usr" 2>/dev/null || true
+    [[ -d "${LIB_DIR}/lib" ]] && mount -o remount,ro,bind "${JAIL_DIR}/lib" 2>/dev/null || true
+    [[ -d "${LIB_DIR}/lib64" ]] && mount -o remount,ro,bind "${JAIL_DIR}/lib64" 2>/dev/null || true
+fi
+
+{{- range .BindMounts }}
 {{- if .ReadOnly }}
-mount -o remount,ro,bind "${JAIL_DIR}/{{ .Dst }}"
+mount -o remount,ro,bind "${JAIL_DIR}/{{ .Dst }}" 2>/dev/null || true
 {{- end }}
 {{- end }}
 

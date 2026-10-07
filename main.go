@@ -114,6 +114,11 @@ func handleScaffold(appDir string) {
 			return err
 		}
 
+		// void 自身の内部テンプレートはプロジェクト生成対象から除外
+		if relPath == "jail.sh.tmpl" {
+			return nil
+		}
+
 		destRelPath := strings.TrimSuffix(relPath, ".tmpl")
 		destPath := filepath.Join(appDir, destRelPath)
 

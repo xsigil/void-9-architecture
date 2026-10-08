@@ -1,0 +1,107 @@
+// templates/internal/presentation/web/csrf.go.tmpl
+package web
+
+import (
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"fmt"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/gin-gonic/gin"
+)
+
+type CSRFManager struct {
+	secret []byte
+	ttl    time.Duration
+}
+
+func NewCSRFManager(secret []byte, ttl time.Duration) *CSRFManager {
+	if len(secret) == 0 {
+		secret = make([]byte, 32)
+		_, _ = rand.Read(secret)
+	}
+	return &CSRFManager{secret: secret, ttl: ttl}
+}
+
+// GenerateToken は "nonce:timestamp:signature" 形式の署名付きトークンを生成
+func (m *CSRFManager) GenerateToken() string {
+	nonce := make([]byte, 16)
+	_, _ = rand.Read(nonce)
+	nonceB64 := base64.RawURLEncoding.EncodeToString(nonce)
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+
+	payload := fmt.Sprintf("%s:%s", nonceB64, ts)
+	sig := m.sign(payload)
+	return fmt.Sprintf("%s:%s", payload, sig)
+}
+
+func (m *CSRFManager) ValidateToken(token string) bool {
+	parts := strings.Split(token, ":")
+	if len(parts) != 3 {
+		return false
+	}
+
+	payload := fmt.Sprintf("%s:%s", parts[0], parts[1])
+	expectedSig := m.sign(payload)
+
+	// タイミング攻撃防止
+	if !hmac.Equal([]byte(parts[2]), []byte(expectedSig)) {
+		return false
+	}
+
+	ts, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		return false
+	}
+
+	issuedAt := time.Unix(ts, 0)
+	if time.Since(issuedAt) > m.ttl || issuedAt.After(time.Now().Add(1*time.Minute)) {
+		return false
+	}
+
+	return true
+}
+
+func (m *CSRFManager) sign(payload string) string {
+	mac := hmac.New(sha256.New, m.secret)
+	mac.Write([]byte(payload))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+// Middleware は CSRF検証とセキュアCookieの発行を行う
+func (m *CSRFManager) Middleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// 1. 既存のCookieを確認。無ければ新規発行
+		token, err := c.Cookie("csrf_token")
+		if err != nil || !m.ValidateToken(token) {
+			token = m.GenerateToken()
+			c.SetSameSite(http.SameSiteStrictMode)
+			c.SetCookie("csrf_token", token, int(m.ttl.Seconds()), "/", "", false, false)
+		}
+		c.Set("csrf_token", token)
+
+		// 2. 状態変更メソッド (POST, PUT, DELETE, PATCH) の場合トークンを検証
+		if c.Request.Method == http.MethodPost ||
+			c.Request.Method == http.MethodPut ||
+			c.Request.Method == http.MethodDelete ||
+			c.Request.Method == http.MethodPatch {
+
+			clientToken := c.GetHeader("X-CSRF-Token")
+			if clientToken == "" {
+				clientToken = c.PostForm("csrf_token")
+			}
+
+			if clientToken == "" || clientToken != token || !m.ValidateToken(clientToken) {
+				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "invalid or expired CSRF signature"})
+				return
+			}
+		}
+
+		c.Next()
+	}
+}

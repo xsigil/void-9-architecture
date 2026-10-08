@@ -4,12 +4,18 @@ import (
 	"html/template"
 	"io/fs"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
 func SetupRouter(handler *Handler, webFS fs.FS) *gin.Engine {
 	r := gin.Default()
+
+	// セキュリティヘッダーおよび署名付きCSRFミドルウェア登録
+	csrfManager := NewCSRFManager(nil, 2*time.Hour)
+	r.Use(SecurityHeadersMiddleware())
+	r.Use(csrfManager.Middleware())
 
 	// 埋め込み静的ファイルの提供
 	staticFS, _ := fs.Sub(webFS, "static")

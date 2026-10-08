@@ -2,6 +2,7 @@ package web
 
 import (
 	"fmt"
+	"html"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -24,9 +25,12 @@ func (h *Handler) Index(c *gin.Context) {
 		return
 	}
 
+	csrfToken, _ := c.Get("csrf_token")
+
 	c.HTML(http.StatusOK, "base.html", gin.H{
-		"Title": "{{MODULE_NAME}}",
-		"Items": items,
+		"Title":     "{{MODULE_NAME}}",
+		"Items":     items,
+		"CSRFToken": csrfToken,
 	})
 }
 
@@ -39,8 +43,11 @@ func (h *Handler) CreateItem(c *gin.Context) {
 		return
 	}
 
-	// HTMX用 パーシャルHTMLスニペットを直接返却
-	htmlSnippet := fmt.Sprintf(`<article id="item-%s"><strong>%s</strong>: %s</article>`, id, id, val)
+	// XSS対策: ユーザー入力を明示的にエスケープ
+	safeVal := html.EscapeString(val)
+	safeID := html.EscapeString(id)
+
+	htmlSnippet := fmt.Sprintf(`<article id="item-%s"><strong>%s</strong>: %s</article>`, safeID, safeID, safeVal)
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	c.String(http.StatusCreated, htmlSnippet)
 }

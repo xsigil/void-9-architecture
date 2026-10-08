@@ -11,7 +11,7 @@
         body { padding: 2rem 0; }
     </style>
 </head>
-<body>
+<body hx-headers='{"X-CSRF-Token": "{{.CSRFToken}}"}' class="container">
     <main class="container">
         {{ template "content" . }}
     </main>

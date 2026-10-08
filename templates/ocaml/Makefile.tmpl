@@ -1,12 +1,21 @@
-.PHONY: build clean run
+.PHONY: all build run clean
+
+BIN_DIR ?= ./bin
+TARGET  ?= $(BIN_DIR)/app
+
+all: build
 
 build:
+	@mkdir -p $(BIN_DIR)
+	@printf "[*] Building OCaml native executable via dune...\n"
 	dune build --profile release bin/main.exe
-	mkdir -p bin
-	cp _build/default/bin/main.exe bin/app
+	@cp -f _build/default/bin/main.exe $(TARGET)
+	@chmod 755 $(TARGET)
+	@printf "[+] Built binary placed at %s\n" "$(TARGET)"
+
+run: build
+	$(TARGET)
 
 clean:
 	dune clean
-
-run: build
-	./bin/app
+	@rm -f $(TARGET)

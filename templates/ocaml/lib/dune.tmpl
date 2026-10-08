@@ -1,0 +1,7 @@
+(include_subdirs unqualified)
+
+(library
+ (name app_lib)
+ (wrapped false)
+ (libraries dream caqti caqti-lwt caqti-lwt.unix caqti-driver-sqlite3 lwt)
+ (preprocess (pps lwt_ppx)))

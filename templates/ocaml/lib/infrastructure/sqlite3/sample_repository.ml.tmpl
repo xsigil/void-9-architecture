@@ -1,0 +1,32 @@
+module Q = struct
+  open Caqti_request.Infix
+  open Caqti_type.Std
+
+  let sample_row =
+    custom
+      ~encode:(fun (s : Sample.t) -> Ok (s.id, s.value))
+      ~decode:(fun (id, value) -> Ok { Sample.id; value })
+      (t2 string string)
+
+  let select_all =
+    (unit ->* sample_row)
+    "SELECT id, value FROM samples ORDER BY rowid DESC"
+
+  let select_by_id =
+    (string ->? sample_row)
+    "SELECT id, value FROM samples WHERE id = ?"
+
+  let upsert =
+    (sample_row ->. unit)
+    "INSERT INTO samples (id, value) VALUES (?, ?) \
+     ON CONFLICT(id) DO UPDATE SET value = excluded.value"
+end
+
+let find_all (module C : Caqti_lwt.CONNECTION) =
+  C.collect_list Q.select_all ()
+
+let find_by_id (module C : Caqti_lwt.CONNECTION) (id : Sample.id) =
+  C.find_opt Q.select_by_id id
+
+let save (module C : Caqti_lwt.CONNECTION) (sample : Sample.t) =
+  C.exec Q.upsert sample

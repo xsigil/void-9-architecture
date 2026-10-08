@@ -1,0 +1,6 @@
+let setup_router (usecase : Sample_usecase.t) =
+  Dream.router [
+    Dream.get "/static/**" (Dream.static "web/static");
+    Dream.get "/" (Handler.index usecase);
+    Dream.post "/items" (Handler.create_item usecase);
+  ]

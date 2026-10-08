@@ -1,20 +1,20 @@
-.PHONY: all build run clean
-
 BIN_DIR ?= ./bin
 TARGET  ?= $(BIN_DIR)/app
+
+.PHONY: all build run clean
 
 all: build
 
 build:
 	@mkdir -p $(BIN_DIR)
-	@printf "[*] Building OCaml native executable via dune...\n"
+	@printf "[*] Compiling OCaml native executable via dune...\n"
 	dune build --profile release bin/main.exe
 	@cp -f _build/default/bin/main.exe $(TARGET)
 	@chmod 755 $(TARGET)
-	@printf "[+] Built binary placed at %s\n" "$(TARGET)"
+	@printf "[+] Built successfully: %s\n" "$(TARGET)"
 
 run: build
-	$(TARGET)
+	DB_PATH="data/app.sqlite3" $(TARGET)
 
 clean:
 	dune clean

@@ -1,0 +1,5 @@
+module type S = sig
+  val with_tx :
+    ((module Caqti_lwt.CONNECTION) -> ('a, [> Caqti_error.t]) result Lwt.t) ->
+    ('a, [> Caqti_error.t]) result Lwt.t
+end

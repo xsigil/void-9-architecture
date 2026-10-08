@@ -1,0 +1,13 @@
+type id = string
+
+type t = {
+  id : id;
+  value : string;
+}
+
+let create (id : id) (value : string) : (t, string) result =
+  let trimmed = String.trim value in
+  if String.length trimmed = 0 then
+    Error "value cannot be empty"
+  else
+    Ok { id; value = trimmed }

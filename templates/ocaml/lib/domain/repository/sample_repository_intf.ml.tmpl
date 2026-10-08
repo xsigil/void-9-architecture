@@ -1,0 +1,15 @@
+module type S = sig
+  val find_all :
+    (module Caqti_lwt.CONNECTION) ->
+    (Sample.t list, [> Caqti_error.t]) result Lwt.t
+
+  val find_by_id :
+    (module Caqti_lwt.CONNECTION) ->
+    Sample.id ->
+    (Sample.t option, [> Caqti_error.t]) result Lwt.t
+
+  val save :
+    (module Caqti_lwt.CONNECTION) ->
+    Sample.t ->
+    (unit, [> Caqti_error.t]) result Lwt.t
+end

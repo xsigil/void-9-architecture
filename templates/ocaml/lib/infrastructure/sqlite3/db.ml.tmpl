@@ -1,0 +1,12 @@
+open Lwt.Infix
+
+let connect (db_path : string) =
+  let dir = Filename.dirname db_path in
+  if not (Sys.file_exists dir) then
+    (try Unix.mkdir dir 0o755 with _ -> ());
+
+  let uri_str = Printf.sprintf "sqlite3:%s?busy_timeout=5000" db_path in
+  let uri = Uri.of_string uri_str in
+  match Caqti_lwt_unix.connect_pool uri with
+  | Ok pool -> Lwt.return pool
+  | Error err -> Lwt.fail_with (Caqti_error.show err)

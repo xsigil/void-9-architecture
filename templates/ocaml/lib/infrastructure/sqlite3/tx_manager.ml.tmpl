@@ -1,0 +1,21 @@
+open Lwt.Infix
+
+type pool_t = (Caqti_lwt.connection, Caqti_error.t) Caqti_lwt_unix.Pool.t
+
+let make (pool : pool_t) =
+  let with_tx (f : (module Caqti_lwt.CONNECTION) -> ('a, [> Caqti_error.t]) result Lwt.t) =
+    Caqti_lwt_unix.Pool.use (fun (module C : Caqti_lwt.CONNECTION) ->
+      C.start () >>= function
+      | Error err -> Lwt.return (Error err)
+      | Ok () ->
+        f (module C : Caqti_lwt.CONNECTION) >>= function
+        | Ok res ->
+          C.commit () >>= (function
+          | Ok () -> Lwt.return (Ok res)
+          | Error err -> Lwt.return (Error err))
+        | Error err ->
+          C.rollback () >>= fun _ ->
+          Lwt.return (Error err)
+    ) pool
+  in
+  with_tx

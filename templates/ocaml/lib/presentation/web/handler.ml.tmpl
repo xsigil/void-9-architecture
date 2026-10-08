@@ -1,0 +1,93 @@
+open Lwt.Infix
+
+let random_id () =
+  let bytes = Dream.random 4 in
+  let b0 = Char.code (String.get bytes 0) in
+  let b1 = Char.code (String.get bytes 1) in
+  let b2 = Char.code (String.get bytes 2) in
+  let b3 = Char.code (String.get bytes 3) in
+  Printf.sprintf "%02x%02x%02x%02x" b0 b1 b2 b3
+
+let index (usecase : Sample_usecase.t) request =
+  usecase |> Sample_usecase.list >>= function
+  | Error err ->
+    Dream.respond ~status:`Internal_Server_Error (Caqti_error.show err)
+  | Ok items ->
+    let csrf_token = Dream.csrf_token request in
+    let items_html =
+      items
+      |> List.map (fun (item : Sample.t) ->
+        Printf.sprintf
+          {|<article id="item-%s"><strong>%s</strong>: %s</article>|}
+          (Dream.html_escape item.id)
+          (Dream.html_escape item.id)
+          (Dream.html_escape item.value))
+      |> String.concat "\n"
+    in
+    let html = Printf.sprintf {|<!DOCTYPE html>
+<html lang="ja" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Void - Minimal Containerless Service (OCaml)</title>
+  <link rel="stylesheet" href="/static/pico.min.css">
+  <script src="/static/htmx.min.js"></script>
+  <script defer src="/static/alpine.min.js"></script>
+</head>
+<body class="container" style="padding-top: 2rem;">
+  <main>
+    <header>
+      <h1>Void Architecture</h1>
+      <p>Minimal isolated web service running <strong>OCaml (Dream + Caqti + Lwt)</strong>.</p>
+    </header>
+
+    <section>
+      <form hx-post="/items"
+            hx-target="#items-container"
+            hx-swap="afterbegin"
+            hx-headers='{"X-CSRF-Token": "%s"}'
+            hx-on::after-request="if(event.detail.successful) this.reset();">
+        <fieldset role="group">
+          <input type="text" name="value" placeholder="Enter new sample value..." required autocomplete="off" />
+          <input type="submit" value="Submit" />
+        </fieldset>
+      </form>
+    </section>
+
+    <hr />
+
+    <section>
+      <h2>Persisted Items</h2>
+      <div id="items-container">
+        %s
+      </div>
+    </section>
+  </main>
+</body>
+</html>|} csrf_token items_html in
+    Dream.html html
+
+let create_item (usecase : Sample_usecase.t) request =
+  let%lwt is_valid_csrf =
+    match Dream.header request "X-CSRF-Token" with
+    | Some token ->
+      (Dream.verify_csrf_token request token >|= function
+       | `Ok -> true
+       | _ -> false)
+    | None -> Lwt.return_false
+  in
+  if not is_valid_csrf then
+    Dream.respond ~status:`Forbidden {|{"error": "invalid or expired CSRF signature"}|}
+  else
+    match%lwt Dream.form ~csrf:false request with
+    | `Ok [("value", val_str)] ->
+      let raw_id = random_id () in
+      (usecase |> fun u -> Sample_usecase.execute u raw_id val_str) >>= (function
+      | Ok () ->
+        let safe_id = Dream.html_escape raw_id in
+        let safe_val = Dream.html_escape val_str in
+        let snippet = Printf.sprintf {|<article id="item-%s"><strong>%s</strong>: %s</article>|} safe_id safe_id safe_val in
+        Dream.respond ~status:`Created ~headers:[("Content-Type", "text/html; charset=utf-8")] snippet
+      | Error msg ->
+        Dream.respond ~status:`Bad_Request msg)
+    | _ -> Dream.respond ~status:`Bad_Request "invalid form submission"

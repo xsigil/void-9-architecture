@@ -1,0 +1,8 @@
+let headers_middleware inner_handler request =
+  let%lwt response = inner_handler request in
+  Dream.add_header response "X-Frame-Options" "DENY";
+  Dream.add_header response "X-Content-Type-Options" "nosniff";
+  Dream.add_header response "Referrer-Policy" "strict-origin-when-cross-origin";
+  Dream.add_header response "Content-Security-Policy"
+    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'";
+  Lwt.return response

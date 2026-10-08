@@ -1,0 +1,23 @@
+open Lwt.Infix
+
+type t = {
+  pool : (Caqti_lwt.connection, Caqti_error.t) Caqti_lwt_unix.Pool.t;
+  with_tx : ((module Caqti_lwt.CONNECTION) -> (unit, Caqti_error.t) result Lwt.t) -> (unit, Caqti_error.t) result Lwt.t;
+}
+
+let create pool with_tx = { pool; with_tx }
+
+let list (u : t) =
+  Caqti_lwt_unix.Pool.use (fun conn ->
+    Sample_repository.find_all conn
+  ) u.pool
+
+let execute (u : t) (raw_id : string) (value : string) =
+  match Sample.create raw_id value with
+  | Error msg -> Lwt.return (Error msg)
+  | Ok sample ->
+    u.with_tx (fun conn ->
+      Sample_repository.save conn sample
+    ) >>= function
+    | Ok () -> Lwt.return (Ok ())
+    | Error err -> Lwt.return (Error (Caqti_error.show err))

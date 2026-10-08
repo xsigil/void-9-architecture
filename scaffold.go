@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"text/template"
 )
 
 //go:embed templates/*
@@ -105,7 +104,7 @@ func renderTemplateTree(srcFS fs.FS, destRoot string, vars map[string]string) er
 			return nil
 		}
 
-		// ocaml や go の親ディレクトリ自体はスキップ
+		// templates/ プレフィックスをトリム
 		cleanPath := strings.TrimPrefix(path, "templates/")
 
 		relPath := strings.TrimSuffix(cleanPath, ".tmpl")
@@ -124,23 +123,20 @@ func renderTemplateTree(srcFS fs.FS, destRoot string, vars map[string]string) er
 			return err
 		}
 
-		// .tmpl 拡張子のファイルは変数置換して保存
+		// .tmpl 拡張子のファイルはプレースホルダーを変数で置換
 		if strings.HasSuffix(path, ".tmpl") {
-			tmpl, err := template.New(filepath.Base(path)).Parse(string(content))
-			if err != nil {
-				return fmt.Errorf("failed to parse template %s: %w", path, err)
+			rendered := string(content)
+			for k, v := range vars {
+				rendered = strings.ReplaceAll(rendered, "{{"+k+"}}", v)
+				// ドット付き (例: {{ .MODULE_NAME }}) の記述にも念のため対応
+				rendered = strings.ReplaceAll(rendered, "{{."+k+"}}", v)
+				rendered = strings.ReplaceAll(rendered, "{{ ."+k+" }}", v)
 			}
 
-			f, err := os.OpenFile(destPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
-			if err != nil {
-				return err
-			}
-			defer f.Close()
-
-			return tmpl.Execute(f, vars)
+			return os.WriteFile(destPath, []byte(rendered), 0644)
 		}
 
-		// 静的バイナリファイルや CSS/JS などの通常ファイルはそのままコピー
+		// 通常ファイル（バイナリ、アセット等）はそのまま配置
 		return os.WriteFile(destPath, content, 0644)
 	})
 }

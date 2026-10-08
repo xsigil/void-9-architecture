@@ -1,0 +1,12 @@
+.PHONY: build clean run
+
+build:
+	dune build --profile release bin/main.exe
+	mkdir -p bin
+	cp _build/default/bin/main.exe bin/app
+
+clean:
+	dune clean
+
+run: build
+	./bin/app

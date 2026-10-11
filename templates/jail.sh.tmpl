@@ -9,7 +9,6 @@ fi
 JAIL_DIR=$(mktemp -d /run/void-jail.XXXXXX)
 
 cleanup() {
-    # 内部バインドマウントの解除
     {{range .BindMounts}}
     umount -l "${JAIL_DIR}{{.Dst}}" 2>/dev/null || true
     {{end}}
@@ -20,11 +19,10 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# 1. exec 可能な tmpfs ルートを作成
+# 1. tmpfs ルートの構築
 mount -t tmpfs -o "size=256M,exec,dev,suid" tmpfs "${JAIL_DIR}"
 
-# 必要なディレクトリとシンボリックリンクの作成 (Arch Linux Merged /usr 構成)
-mkdir -p "${JAIL_DIR}"/{usr,proc,dev,etc,tmp,var,run}
+mkdir -p "${JAIL_DIR}"/{usr,proc,dev,etc,tmp,var/lib,run}
 mount --bind -o ro /usr "${JAIL_DIR}/usr"
 
 ln -s usr/bin "${JAIL_DIR}/bin"
@@ -32,7 +30,7 @@ ln -s usr/bin "${JAIL_DIR}/sbin"
 ln -s usr/lib "${JAIL_DIR}/lib"
 ln -s usr/lib "${JAIL_DIR}/lib64"
 
-# 2. ユーザー指定バインドマウントの適用
+# 2. バインドマウントの適用
 {{range .BindMounts}}
 mkdir -p "${JAIL_DIR}{{.Dst}}"
 if [ "{{.ReadOnly}}" = "true" ]; then

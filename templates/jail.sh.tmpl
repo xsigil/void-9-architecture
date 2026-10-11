@@ -1,26 +1,51 @@
 #!/bin/bash
 set -euo pipefail
 
-# すでにマウント名前空間を分離済みでなければ unshare して自分自身を再実行
-if [ -z "${VOID_JAIL_UNSHARED:-}" ]; then
-    export VOID_JAIL_UNSHARED=1
-    exec unshare -m --propagation private /bin/bash "$0" "$@"
+if [[ $EUID -ne 0 ]]; then
+    echo "[-] Void containment requires root privileges." >&2
+    exit 1
 fi
 
-# 1. バインドマウントの適用（プライベートなマウント名前空間内）
+JAIL_DIR=$(mktemp -d /run/void-jail.XXXXXX)
+
+cleanup() {
+    # 内部マウントのアンマウント
+    {{range .BindMounts}}
+    umount -l "${JAIL_DIR}{{.Dst}}" 2>/dev/null || true
+    {{end}}
+    umount -l "${JAIL_DIR}/proc" 2>/dev/null || true
+    umount -l "${JAIL_DIR}" 2>/dev/null || true
+    rm -rf "${JAIL_DIR}"
+}
+trap cleanup EXIT INT TERM
+
+# 1. 隔離された tmpfs ルートの構築
+mount -t tmpfs -o "size=256M,nodev,nosuid" tmpfs "${JAIL_DIR}"
+
+# 必要な基本ディレクトリの作成
+mkdir -p "${JAIL_DIR}"/{bin,sbin,usr,lib,lib64,proc,dev,etc,tmp,var}
+
+# ホストの /usr, /lib, /bin 構造を最低限ロケート（またはバインド）
+mount --bind -o ro /usr "${JAIL_DIR}/usr"
+[[ -d /lib ]] && mount --bind -o ro /lib "${JAIL_DIR}/lib" 2>/dev/null || true
+[[ -d /lib64 ]] && mount --bind -o ro /lib64 "${JAIL_DIR}/lib64" 2>/dev/null || true
+[[ -d /bin ]] && mount --bind -o ro /bin "${JAIL_DIR}/bin" 2>/dev/null || true
+[[ -d /sbin ]] && mount --bind -o ro /sbin "${JAIL_DIR}/sbin" 2>/dev/null || true
+
+# 2. ユーザー指定バインドマウントの適用
 {{range .BindMounts}}
-mkdir -p "{{.Dst}}"
+mkdir -p "${JAIL_DIR}{{.Dst}}"
 if [ "{{.ReadOnly}}" = "true" ]; then
-    mount --bind -o ro "{{.Src}}" "{{.Dst}}"
+    mount --bind -o ro "{{.Src}}" "${JAIL_DIR}{{.Dst}}"
 else
-    mount --bind "{{.Src}}" "{{.Dst}}"
+    mount --bind "{{.Src}}" "${JAIL_DIR}{{.Dst}}"
 fi
 {{end}}
 
-# 2. 実行時ライブラリパスの設定
+# 3. 実行時ライブラリパスの設定
 {{if .LibDir}}
 export LD_LIBRARY_PATH="{{.LibDir}}:${LD_LIBRARY_PATH:-}"
 {{end}}
 
-# 3. 対象プロセスの実行
-exec {{.ExecBin}} {{range .ExecArgs}}"{{.}}" {{end}}
+# 4. 完全名前空間分離 + chroot 実行
+exec unshare --mount --pid --ipc --uts --mount-proc="${JAIL_DIR}/proc" --fork chroot "${JAIL_DIR}" {{.ExecBin}} {{range .ExecArgs}}"{{.}}" {{end}}

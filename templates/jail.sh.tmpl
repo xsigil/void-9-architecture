@@ -1,7 +1,13 @@
 #!/bin/bash
 set -euo pipefail
 
-# 1. バインドマウントの適用
+# すでにマウント名前空間を分離済みでなければ unshare して自分自身を再実行
+if [ -z "${VOID_JAIL_UNSHARED:-}" ]; then
+    export VOID_JAIL_UNSHARED=1
+    exec unshare -m --propagation private /bin/bash "$0" "$@"
+fi
+
+# 1. バインドマウントの適用（プライベートなマウント名前空間内）
 {{range .BindMounts}}
 mkdir -p "{{.Dst}}"
 if [ "{{.ReadOnly}}" = "true" ]; then
@@ -11,7 +17,7 @@ else
 fi
 {{end}}
 
-# 2. 実行時ライブラリパスの設定（LibDir が指定されている場合）
+# 2. 実行時ライブラリパスの設定
 {{if .LibDir}}
 export LD_LIBRARY_PATH="{{.LibDir}}:${LD_LIBRARY_PATH:-}"
 {{end}}

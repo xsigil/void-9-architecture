@@ -44,10 +44,14 @@ func parseBindFlags(bindStr string) ([]BindMount, error) {
 		dst := strings.TrimPrefix(parts[1], "/")
 		ro := false
 		if len(parts) == 3 {
-			if parts[2] != "ro" {
-				return nil, fmt.Errorf("invalid bind mount flag '%s', expected 'ro'", parts[2])
+			switch parts[2] {
+			case "ro":
+				ro = true
+			case "rw":
+				ro = false
+			default:
+				return nil, fmt.Errorf("invalid bind mount flag '%s', expected 'ro' or 'rw'", parts[2])
 			}
-			ro = true
 		}
 		mounts = append(mounts, BindMount{
 			Src:      src,

@@ -1,0 +1,20 @@
+#!/bin/bash
+set -euo pipefail
+
+# 1. バインドマウントの適用
+{{range .BindMounts}}
+mkdir -p "{{.Dst}}"
+if [ "{{.ReadOnly}}" = "true" ]; then
+    mount --bind -o ro "{{.Src}}" "{{.Dst}}"
+else
+    mount --bind "{{.Src}}" "{{.Dst}}"
+fi
+{{end}}
+
+# 2. 実行時ライブラリパスの設定（LibDir が指定されている場合）
+{{if .LibDir}}
+export LD_LIBRARY_PATH="{{.LibDir}}:${LD_LIBRARY_PATH:-}"
+{{end}}
+
+# 3. 対象プロセスの実行
+exec {{.ExecBin}} {{range .ExecArgs}}"{{.}}" {{end}}

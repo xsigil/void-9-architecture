@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-//go:embed templates/*
+//go:embed templates
 var embeddedAssets embed.FS
 
 type ScaffoldConfig struct {

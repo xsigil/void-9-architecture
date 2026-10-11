@@ -9,28 +9,28 @@ fi
 JAIL_DIR=$(mktemp -d /run/void-jail.XXXXXX)
 
 cleanup() {
-    # 内部マウントのアンマウント
+    # 内部バインドマウントの解除
     {{range .BindMounts}}
     umount -l "${JAIL_DIR}{{.Dst}}" 2>/dev/null || true
     {{end}}
     umount -l "${JAIL_DIR}/proc" 2>/dev/null || true
+    umount -l "${JAIL_DIR}/usr" 2>/dev/null || true
     umount -l "${JAIL_DIR}" 2>/dev/null || true
     rm -rf "${JAIL_DIR}"
 }
 trap cleanup EXIT INT TERM
 
-# 1. 隔離された tmpfs ルートの構築
-mount -t tmpfs -o "size=256M,nodev,nosuid" tmpfs "${JAIL_DIR}"
+# 1. exec 可能な tmpfs ルートを作成
+mount -t tmpfs -o "size=256M,exec,dev,suid" tmpfs "${JAIL_DIR}"
 
-# 必要な基本ディレクトリの作成
-mkdir -p "${JAIL_DIR}"/{bin,sbin,usr,lib,lib64,proc,dev,etc,tmp,var}
-
-# ホストの /usr, /lib, /bin 構造を最低限ロケート（またはバインド）
+# 必要なディレクトリとシンボリックリンクの作成 (Arch Linux Merged /usr 構成)
+mkdir -p "${JAIL_DIR}"/{usr,proc,dev,etc,tmp,var,run}
 mount --bind -o ro /usr "${JAIL_DIR}/usr"
-[[ -d /lib ]] && mount --bind -o ro /lib "${JAIL_DIR}/lib" 2>/dev/null || true
-[[ -d /lib64 ]] && mount --bind -o ro /lib64 "${JAIL_DIR}/lib64" 2>/dev/null || true
-[[ -d /bin ]] && mount --bind -o ro /bin "${JAIL_DIR}/bin" 2>/dev/null || true
-[[ -d /sbin ]] && mount --bind -o ro /sbin "${JAIL_DIR}/sbin" 2>/dev/null || true
+
+ln -s usr/bin "${JAIL_DIR}/bin"
+ln -s usr/bin "${JAIL_DIR}/sbin"
+ln -s usr/lib "${JAIL_DIR}/lib"
+ln -s usr/lib "${JAIL_DIR}/lib64"
 
 # 2. ユーザー指定バインドマウントの適用
 {{range .BindMounts}}

@@ -10,14 +10,13 @@ import (
 	"unicode"
 )
 
-// TokenType トークン種別
 type TokenType int
 
 const (
-	TokenEOF     TokenType = iota
-	TokenIdent             // ファイル名やパス (例: libc.so.6, /lib/x86_64-linux-gnu/libc.so.6)
-	TokenArrow             // "=>"
-	TokenAddress           // "(0x0000...)"
+	TokenEOF TokenType = iota
+	TokenIdent
+	TokenArrow
+	TokenAddress
 )
 
 type Token struct {
@@ -25,7 +24,6 @@ type Token struct {
 	Value string
 }
 
-// Lexer ldd出力用字句解析器
 type Lexer struct {
 	input []rune
 	pos   int
@@ -44,13 +42,11 @@ func (l *Lexer) NextToken() Token {
 
 	ch := l.input[l.pos]
 
-	// "=>" の判定
 	if ch == '=' && l.pos+1 < len(l.input) && l.input[l.pos+1] == '>' {
 		l.pos += 2
 		return Token{Type: TokenArrow, Value: "=>"}
 	}
 
-	// アドレス "(0x...)" の判定
 	if ch == '(' {
 		start := l.pos
 		for l.pos < len(l.input) && l.input[l.pos] != ')' && l.input[l.pos] != '\n' {
@@ -62,7 +58,6 @@ func (l *Lexer) NextToken() Token {
 		return Token{Type: TokenAddress, Value: string(l.input[start:l.pos])}
 	}
 
-	// パスやライブラリ名 (空白・括弧・イコール以外)
 	start := l.pos
 	for l.pos < len(l.input) && !unicode.IsSpace(l.input[l.pos]) && l.input[l.pos] != '(' && l.input[l.pos] != '=' {
 		l.pos++
@@ -77,13 +72,11 @@ func (l *Lexer) skipWhitespace() {
 	}
 }
 
-// ParsedLibrary 抽出されたライブラリ情報
 type ParsedLibrary struct {
-	Name     string // soname またはベース名
-	RealPath string // ホスト上の絶対パス
+	Name     string
+	RealPath string
 }
 
-// Parser ldd出力行の構文解析器
 type Parser struct {
 	lexer        *Lexer
 	currentToken Token
@@ -105,7 +98,6 @@ func (p *Parser) consume(t TokenType) (string, error) {
 	return val, nil
 }
 
-// ParseLine 1行分のldd出力を解析
 func (p *Parser) ParseLine() (*ParsedLibrary, error) {
 	if p.currentToken.Type == TokenEOF {
 		return nil, nil
@@ -116,20 +108,16 @@ func (p *Parser) ParseLine() (*ParsedLibrary, error) {
 		return nil, err
 	}
 
-	// パターン1: "linux-vdso.so.1 (0x...)" -> 実体パスなし (カーネルVDSO)
 	if p.currentToken.Type == TokenAddress {
 		if strings.HasPrefix(firstIdent, "/") {
-			// パターン2: "/lib64/ld-linux-x86-64.so.2 (0x...)" -> インタープリタ直指定
 			return &ParsedLibrary{
 				Name:     filepath.Base(firstIdent),
 				RealPath: firstIdent,
 			}, nil
 		}
-		// vdso 等の仮想エントリはスキップ
 		return nil, nil
 	}
 
-	// パターン3: "libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x...)"
 	if p.currentToken.Type == TokenArrow {
 		_, _ = p.consume(TokenArrow)
 		realPath, err := p.consume(TokenIdent)
@@ -140,7 +128,6 @@ func (p *Parser) ParseLine() (*ParsedLibrary, error) {
 			_, _ = p.consume(TokenAddress)
 		}
 
-		// "not found" などの例外ガード
 		if !strings.HasPrefix(realPath, "/") {
 			return nil, fmt.Errorf("unresolved library target: %s", realPath)
 		}
@@ -154,7 +141,6 @@ func (p *Parser) ParseLine() (*ParsedLibrary, error) {
 	return nil, nil
 }
 
-// ResolveAndCollectLibraries lddを実行し、解析した共有ライブラリをコピーする
 func ResolveAndCollectLibraries(execPath, targetLibDir string) error {
 	absExec, err := filepath.Abs(execPath)
 	if err != nil {
@@ -201,7 +187,6 @@ func ResolveAndCollectLibraries(execPath, targetLibDir string) error {
 		}
 	}
 
-	// glibc を使用している場合、実行時の NSS (Name Service Switch / getpwuid) 用共有ライブラリを自動収集
 	if hasGlibc {
 		patterns := []string{
 			"/usr/lib*/libnss_files.so*",
@@ -231,63 +216,55 @@ func ResolveAndCollectLibraries(execPath, targetLibDir string) error {
 		}
 	}
 
+	// ld-linux を確実に /usr/lib 直下へコピー
+	ldMatches, _ := filepath.Glob("/usr/lib/ld-linux*.so*")
+	for _, m := range ldMatches {
+		if collected[m] {
+			continue
+		}
+		collected[m] = true
+		_ = copyLibraryIncremental(&ParsedLibrary{
+			Name:     filepath.Base(m),
+			RealPath: m,
+		}, targetLibDir)
+	}
+
 	return nil
 }
 
-// copyLibraryIncremental 実体ファイルとシンボリックリンク関係を保持してインクリメンタルコピー
 func copyLibraryIncremental(lib *ParsedLibrary, targetLibDir string) error {
-	destRel := strings.TrimPrefix(lib.RealPath, "/")
-	destPath := filepath.Join(targetLibDir, destRel)
-
-	if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
-		return err
-	}
-
-	if info, err := os.Lstat(destPath); err == nil {
-		if !info.IsDir() {
-			return nil
-		}
-	}
-
-	fi, err := os.Lstat(lib.RealPath)
+	// ホストの実パスからシンボリックリンクを解決
+	evalPath, err := filepath.EvalSymlinks(lib.RealPath)
 	if err != nil {
+		evalPath = lib.RealPath
+	}
+
+	// すべてのライブラリ実体を targetLibDir/usr/lib 直下に配置
+	baseName := filepath.Base(evalPath)
+	destDir := filepath.Join(targetLibDir, "usr", "lib")
+	destPath := filepath.Join(destDir, baseName)
+
+	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return err
 	}
 
-	if fi.Mode()&os.ModeSymlink != 0 {
-		linkTarget, err := os.Readlink(lib.RealPath)
-		if err != nil {
+	// 実体のコピー
+	if _, err := os.Stat(destPath); os.IsNotExist(err) {
+		if err := copyFile(evalPath, destPath); err != nil {
 			return err
 		}
-
-		var resolvedTarget string
-		if filepath.IsAbs(linkTarget) {
-			resolvedTarget = linkTarget
-		} else {
-			resolvedTarget = filepath.Clean(filepath.Join(filepath.Dir(lib.RealPath), linkTarget))
-		}
-
-		subLib := &ParsedLibrary{
-			Name:     filepath.Base(resolvedTarget),
-			RealPath: resolvedTarget,
-		}
-		if err := copyLibraryIncremental(subLib, targetLibDir); err != nil {
-			return err
-		}
-
-		_ = os.Remove(destPath)
-		if err := os.Symlink(linkTarget, destPath); err != nil {
-			return err
-		}
-		fmt.Printf("  -> [SYMLINK] %s -> %s\n", destRel, linkTarget)
-		return nil
+		fmt.Printf("  -> [LIB COPIED] usr/lib/%s\n", baseName)
 	}
 
-	if err := copyFile(lib.RealPath, destPath); err != nil {
-		return err
+	// 元の参照名が実体名と異なる場合は usr/lib 配下にシンボリックリンクを作成
+	origName := filepath.Base(lib.RealPath)
+	if origName != baseName {
+		symlinkPath := filepath.Join(destDir, origName)
+		_ = os.Remove(symlinkPath)
+		_ = os.Symlink(baseName, symlinkPath)
+		fmt.Printf("  -> [SYMLINK] usr/lib/%s -> %s\n", origName, baseName)
 	}
 
-	fmt.Printf("  -> [LIB COPIED] %s\n", destRel)
 	return nil
 }
 

@@ -36,6 +36,7 @@ type JailTemplateData struct {
 	ExecBins   []string // 渡されたすべてのバイナリ絶対パス (ExecBins[0] がエントリポイント)
 	TargetBin  string   // エントリポイントのベース名
 	ExecArgs   []string // 実行引数
+	Debug      bool     // デバッグツリー表示フラグ
 }
 
 func parseBindFlags(raw string) ([]BindMount, error) {
@@ -103,6 +104,7 @@ func RunJail(args []string) error {
 		sizeFlag   string
 		userFlag   string
 		exportFlag bool
+		debugFlag  bool
 	)
 
 	fs.StringVar(&bindFlag, "bind", "", "Bind mount mappings: <src>:<dst>[:ro],...")
@@ -111,6 +113,7 @@ func RunJail(args []string) error {
 	fs.StringVar(&userFlag, "user", "", "User or UID[:GID] to execute target binary inside jail (e.g. postgres, 969:969)")
 	fs.StringVar(&userFlag, "u", "", "User or UID[:GID] to execute target binary inside jail (shorthand)")
 	fs.BoolVar(&exportFlag, "export", false, "Output the generated shell script to stdout without executing")
+	fs.BoolVar(&debugFlag, "debug", false, "Enable verbose jail filesystem tree inspection before execution")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -118,7 +121,7 @@ func RunJail(args []string) error {
 
 	remaining := fs.Args()
 	if len(remaining) == 0 {
-		return fmt.Errorf("missing target executable binary\nUsage: void jail [-size <size>] -lib <dir> [-bind <mappings>] [-u <user>] [--export] <binary...> [-- <args...>]")
+		return fmt.Errorf("missing target executable binary\nUsage: void jail [-size <size>] -lib <dir> [-bind <mappings>] [-u <user>] [--export] [--debug] <binary...> [-- <args...>]")
 	}
 
 	// '--' でバイナリリストと実行時引数を分離
@@ -184,6 +187,7 @@ func RunJail(args []string) error {
 		ExecBins:   absBins,
 		TargetBin:  filepath.Base(absBins[0]),
 		ExecArgs:   execArgs,
+		Debug:      debugFlag,
 	}
 
 	tmpl, err := template.New("jail").Parse(jailScriptTemplate)

@@ -250,9 +250,12 @@ void export \
 4. **Privilege Downgrade**: Jail execution supports immediate privilege drop via `-u <user>`, guaranteeing rootless containment even if invoked via `sudo`.
 5. **Zero Residual Footprint**: Termination collapses the volatile mount. Zero bytes remain recoverable from disk except for explicitly committed persistent conduits.
 
+## 7. I use Arch BTW.
+Core architecture is strictly built for and powered by Arch Linux. If you want Debian/Ubuntu support, feel free to fork it.
+
 ---
 
-## 7. License
+## 8. License
 
 Released under the **MIT License**.
 

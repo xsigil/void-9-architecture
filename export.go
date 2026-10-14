@@ -92,9 +92,13 @@ func RunExport(args []string) error {
 	}
 
 	// 4. 実行バイナリの配置 (/bin/app)
-	destBin := filepath.Join(stagingDir, "bin", "app")
+	binName := filepath.Base(execBin)
+	destBin := filepath.Join(stagingDir, "bin", binName)
 	if err := copyFile(execBin, destBin); err != nil {
 		return fmt.Errorf("failed to copy binary: %w", err)
+	if binName != "app" {
+		_ = os.Symlink(binName, filepath.Join(stagingDir, "bin", "app"))
+	}
 	}
 	_ = os.Chmod(destBin, 0755)
 

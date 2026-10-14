@@ -73,7 +73,7 @@ cd void-9-architecture
 # Compile pure static engine to ./bin/void
 make
 
-# Install to /usr/local/bin/void
+# Install to /usr/local/bin/void (or /usr/bin/void)
 sudo make install
 ```
 
@@ -81,7 +81,7 @@ sudo make install
 
 ## 4. CLI Usage
 
-The `void` CLI provides a unified lifecycle for generating, isolating, and distributing sovereign service skeletons.
+The `void` CLI provides a unified lifecycle for generating, isolating, packaging, and distributing sovereign service runtimes.
 
 ```text
 Void Sovereign Engine (void)
@@ -90,7 +90,8 @@ Hyper-Minimalist Sovereign Architecture & Confinement Perimeter
 USAGE:
   void scaffold <dir>                              Scaffold a pure DDD Void web application
   void ldd <binary> <output-dir>                   Recursively collect ELF dependencies & ld loader
-  void jail [--bind=...] [--lib=...] <binary>      Execute binary inside volatile unshare/chroot RAM jail
+  void pkg [--latest] <pkg-name|archive> <rootfs>  Recursively unpack Arch packages & dependencies into rootfs
+  void jail [-u <user>] [--bind=...] [--lib=...]   Execute binary inside volatile unshare/chroot RAM jail
   void export [--bind=...] [--lib=...] --output=.. Package rootfs directory or standalone .tar.gz
 ```
 
@@ -152,7 +153,60 @@ sudo void jail \
   /usr/bin/mecab
 ```
 
-### 4.4. Package Standalone Images (`void export`)
+### 4.4. Sovereign Package Resolver (`void pkg`)
+
+Extract and recursively resolve entire distribution packages into a clean, minimal rootfs without running container daemons or installing files onto host system paths.
+
+#### Official Repository Mode (Recommended)
+
+Specify a package name directly. `void pkg` queries `pacman`, downloads the canonical release and all upstream dependencies into the cache, unpacks the tree, and resolves runtime dynamic linkers:
+
+```bash
+# Recursively assemble PostgreSQL and all dependencies into /opt/void-postgres/rootfs
+sudo void pkg postgresql /opt/void-postgres/rootfs
+```
+
+#### Offline Archive Mode
+
+Provide a specific `.pkg.tar.zst` file to unpack using existing cached dependencies:
+
+```bash
+sudo void pkg /path/to/my-custom-package.pkg.tar.zst /opt/void-postgres/rootfs
+```
+
+### 4.5. Isolated Database Execution (PostgreSQL Demo)
+
+Run a production RDBMS daemon inside an unprivileged, unshared volatile perimeter:
+
+```bash
+# 1. Initialize DB cluster under unprivileged user 'postgres'
+sudo void jail -u postgres --lib /opt/void-postgres/rootfs/lib \
+    --bind=/opt/void-postgres/data:/data,\
+/opt/void-postgres/rootfs/usr/share:/usr/share:ro,\
+/opt/void-postgres/rootfs/usr/lib/postgresql:/usr/lib/postgresql:ro \
+    /opt/void-postgres/rootfs/usr/bin/initdb \
+    /opt/void-postgres/rootfs/usr/bin/postgres \
+    /opt/void-postgres/rootfs/usr/bin/locale \
+    /opt/void-postgres/rootfs/usr/bin/bash \
+    /opt/void-postgres/rootfs/usr/bin/sh -- \
+    -D /data
+
+# 2. Launch PostgreSQL server
+sudo void jail -u postgres --lib /opt/void-postgres/rootfs/lib \
+    --bind=/opt/void-postgres/data:/data,\
+/opt/void-postgres/rootfs/usr/share:/usr/share:ro,\
+/opt/void-postgres/rootfs/usr/lib/postgresql:/usr/lib/postgresql:ro \
+    /opt/void-postgres/rootfs/usr/bin/postgres -- \
+    -D /data -c unix_socket_directories=/tmp -c listen_addresses='127.0.0.1'
+```
+
+Connect directly from the host:
+
+```bash
+psql -h 127.0.0.1 -U postgres -c "SELECT version();"
+```
+
+### 4.6. Package Standalone Images (`void export`)
 
 Assemble a self-contained rootfs directory or `.tar.gz` archive for deployment onto pristine Linux hosts:
 
@@ -191,9 +245,10 @@ void export \
 ## 6. Threat Posture & Defense
 
 1. **Supply-Chain Elimination**: Abolishing client-side package managers (`npm`/`yarn`) eliminates automated malicious post-install script hooks, dependency confusion, and telemetry leaks.
-2. **Network Surface Occlusion**: SQLite3 does not listen on any network port; remote database scanning and TCP exploitation are structurally impossible.
+2. **Network Surface Occlusion**: In-process databases (SQLite3 WAL) and socket-bound jails eliminate exposed TCP ports.
 3. **Volatile In-Memory Confinement**: Execution resides in an unshared namespace (`CLONE_NEWNS`, `CLONE_NEWPID`, `CLONE_NEWIPC`, `CLONE_NEWUTS`) backed by `tmpfs`. The host filesystem (`/home`, `/root`, `/etc/shadow`) remains invisible.
-4. **Zero Residual Footprint**: Termination collapses the volatile mount. Zero bytes remain recoverable from disk except for the explicitly committed SQLite WAL conduit.
+4. **Privilege Downgrade**: Jail execution supports immediate privilege drop via `-u <user>`, guaranteeing rootless containment even if invoked via `sudo`.
+5. **Zero Residual Footprint**: Termination collapses the volatile mount. Zero bytes remain recoverable from disk except for explicitly committed persistent conduits.
 
 ---
 

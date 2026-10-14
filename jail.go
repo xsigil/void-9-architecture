@@ -31,14 +31,13 @@ type JailTemplateData struct {
 	JailID     string
 	Size       string
 	LibDir     string
+	User       string
 	BindMounts []BindMount
-	ExecBin    string
-	ExecArgs   []string
+	ExecBins   []string // 渡されたすべてのバイナリ絶対パス (ExecBins[0] がエントリポイント)
+	TargetBin  string   // エントリポイントのベース名
+	ExecArgs   []string // 実行引数
 }
 
-// parseBindFlags parses comma-separated mount definitions like:
-// /host/path:/jail/path:ro,/host/data:/jail/data
-// Exported across package main to resolve export.go dependencies.
 func parseBindFlags(raw string) ([]BindMount, error) {
 	if strings.TrimSpace(raw) == "" {
 		return nil, nil
@@ -86,11 +85,6 @@ func parseBindFlags(raw string) ([]BindMount, error) {
 	return mounts, nil
 }
 
-// parseBindMounts acts as an alias for parseBindFlags for backwards compatibility.
-func parseBindMounts(raw string) ([]BindMount, error) {
-	return parseBindFlags(raw)
-}
-
 func generateJailID() string {
 	b := make([]byte, 4)
 	if _, err := rand.Read(b); err != nil {
@@ -107,12 +101,15 @@ func RunJail(args []string) error {
 		bindFlag   string
 		libDirFlag string
 		sizeFlag   string
+		userFlag   string
 		exportFlag bool
 	)
 
 	fs.StringVar(&bindFlag, "bind", "", "Bind mount mappings: <src>:<dst>[:ro],...")
 	fs.StringVar(&libDirFlag, "lib", "", "Path to collected libraries directory (required)")
 	fs.StringVar(&sizeFlag, "size", "64M", "Size of volatile tmpfs RAM filesystem (e.g. 64M, 256M, 512M, 1G)")
+	fs.StringVar(&userFlag, "user", "", "User or UID[:GID] to execute target binary inside jail (e.g. postgres, 969:969)")
+	fs.StringVar(&userFlag, "u", "", "User or UID[:GID] to execute target binary inside jail (shorthand)")
 	fs.BoolVar(&exportFlag, "export", false, "Output the generated shell script to stdout without executing")
 
 	if err := fs.Parse(args); err != nil {
@@ -121,23 +118,49 @@ func RunJail(args []string) error {
 
 	remaining := fs.Args()
 	if len(remaining) == 0 {
-		return fmt.Errorf("missing target executable binary\nUsage: void jail [-size <size>] -lib <dir> [-bind <mappings>] [--export] <binary> [args...]")
+		return fmt.Errorf("missing target executable binary\nUsage: void jail [-size <size>] -lib <dir> [-bind <mappings>] [-u <user>] [--export] <binary...> [-- <args...>]")
 	}
 
-	rawExecBin := remaining[0]
-	execArgs := remaining[1:]
+	// '--' でバイナリリストと実行時引数を分離
+	var rawBins []string
+	var execArgs []string
 
-	absExecBin, err := exec.LookPath(rawExecBin)
-	if err != nil {
-		return fmt.Errorf("target executable '%s' not found: %w", rawExecBin, err)
+	dashIndex := -1
+	for i, arg := range remaining {
+		if arg == "--" {
+			dashIndex = i
+			break
+		}
 	}
-	absExecBin, err = filepath.Abs(absExecBin)
-	if err != nil {
-		return fmt.Errorf("failed to determine absolute path for '%s': %w", absExecBin, err)
+
+	if dashIndex != -1 {
+		rawBins = remaining[:dashIndex]
+		execArgs = remaining[dashIndex+1:]
+	} else {
+		rawBins = []string{remaining[0]}
+		execArgs = remaining[1:]
+	}
+
+	if len(rawBins) == 0 {
+		return fmt.Errorf("no executable binaries specified before '--'")
+	}
+
+	var absBins []string
+	for _, b := range rawBins {
+		target, err := exec.LookPath(b)
+		if err != nil {
+			return fmt.Errorf("target executable '%s' not found: %w", b, err)
+		}
+		absTarget, err := filepath.Abs(target)
+		if err != nil {
+			return fmt.Errorf("failed to determine absolute path for '%s': %w", target, err)
+		}
+		absBins = append(absBins, absTarget)
 	}
 
 	var absLibDir string
 	if libDirFlag != "" {
+		var err error
 		absLibDir, err = filepath.Abs(libDirFlag)
 		if err != nil {
 			return fmt.Errorf("failed to determine absolute path for lib dir '%s': %w", libDirFlag, err)
@@ -156,8 +179,10 @@ func RunJail(args []string) error {
 		JailID:     generateJailID(),
 		Size:       sizeFlag,
 		LibDir:     absLibDir,
+		User:       userFlag,
 		BindMounts: mounts,
-		ExecBin:    absExecBin,
+		ExecBins:   absBins,
+		TargetBin:  filepath.Base(absBins[0]),
 		ExecArgs:   execArgs,
 	}
 
@@ -173,7 +198,6 @@ func RunJail(args []string) error {
 
 	renderedScript := buf.String()
 
-	// If --export is specified, print to stdout and exit cleanly
 	if exportFlag {
 		fmt.Print(renderedScript)
 		return nil
@@ -200,16 +224,13 @@ func RunJail(args []string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	// 1. Ctrl+C (SIGINT) や SIGTERM を Go 側でトラップし、即死を防ぐ
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sigChan)
 
-	// 2. スクリプトを非同期開始
 	if err := cmd.Start(); err != nil {
 		return err
 	}
 
-	// 3. 子プロセス（Bash）が終了し、trap cleanup が完了するのを待機
 	return cmd.Wait()
 }

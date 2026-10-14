@@ -16,6 +16,9 @@ cleanup() {
 {{- end }}
     umount -l "${JAIL_DIR}/lib64" 2>/dev/null || true
     umount -l "${JAIL_DIR}/lib" 2>/dev/null || true
+    umount -l "${JAIL_DIR}/usr/lib64" 2>/dev/null || true
+    umount -l "${JAIL_DIR}/usr/lib" 2>/dev/null || true
+    umount -l "${JAIL_DIR}/dev" 2>/dev/null || true
     umount -l "${JAIL_DIR}/proc" 2>/dev/null || true
     umount -l "${JAIL_DIR}" 2>/dev/null || true
     rm -rf "${JAIL_DIR}"
@@ -26,37 +29,38 @@ trap cleanup EXIT INT TERM
 echo "[*] Launching unshared containment perimeter (tmpfs: ${TMPFS_SIZE})..."
 # 1. 揮発性 tmpfs マウント
 mkdir -p "${JAIL_DIR}"
-mount -t tmpfs -o "size=${TMPFS_SIZE},exec,dev,suid" tmpfs "${JAIL_DIR}"
+mount -t tmpfs -o "size=${TMPFS_SIZE},mode=0755,exec,suid" tmpfs "${JAIL_DIR}"
+chmod 755 "${JAIL_DIR}"
 
-# 2. ディレクトリツリー作成 (/lib, /lib64, /usr/lib)
-mkdir -p "${JAIL_DIR}"/{bin,proc,dev,etc,tmp,lib,lib64,usr/lib}
+# 2. 基本階層作成
+mkdir -p "${JAIL_DIR}/usr"/{bin,lib,share}
+mkdir -p "${JAIL_DIR}"/{proc,dev,etc,tmp,run,lib,lib64}
 
 # 3. 疑似デバイス
-mknod -m 666 "${JAIL_DIR}/dev/null" c 1 3 2>/dev/null || true
-mknod -m 666 "${JAIL_DIR}/dev/zero" c 1 5 2>/dev/null || true
-mknod -m 666 "${JAIL_DIR}/dev/urandom" c 1 9 2>/dev/null || true
-
-# 4. リゾルバ複製
-[[ -f /etc/resolv.conf ]] && cp -a /etc/resolv.conf "${JAIL_DIR}/etc/" 2>/dev/null || true
-
-# 5. ライブラリ群の確実なバインドマウント
-LIB_DIR="{{ .LibDir }}"
-if [[ -n "${LIB_DIR}" && -d "${LIB_DIR}" ]]; then
-    # フラット配置・usr階層配置の双方に対応
-    mount --bind -o ro "${LIB_DIR}" "${JAIL_DIR}/lib"
-    mount --bind -o ro "${LIB_DIR}" "${JAIL_DIR}/lib64"
-    mount --bind -o ro "${LIB_DIR}" "${JAIL_DIR}/usr/lib"
+if ! mount -t devtmpfs devtmpfs "${JAIL_DIR}/dev" -o nosuid,noexec,mode=0755 2>/dev/null; then
+    mount --bind /dev "${JAIL_DIR}/dev"
 fi
 
-# 6. 実行バイナリの配置
-TARGET_BIN="$(basename "{{ .ExecBin }}")"
-cp -a "{{ .ExecBin }}" "${JAIL_DIR}/bin/${TARGET_BIN}"
-chmod 755 "${JAIL_DIR}/bin/${TARGET_BIN}"
+# 4. ホスト情報の複製
+[[ -f /etc/resolv.conf ]] && cp -aL /etc/resolv.conf "${JAIL_DIR}/etc/" 2>/dev/null || true
+[[ -f /etc/passwd ]] && cp -aL /etc/passwd "${JAIL_DIR}/etc/" 2>/dev/null || true
+[[ -f /etc/group ]] && cp -aL /etc/group "${JAIL_DIR}/etc/" 2>/dev/null || true
+chmod 644 "${JAIL_DIR}/etc"/* 2>/dev/null || true
+
+# 5. 引数バイナリ配置
+{{- range .ExecBins }}
+SRC_BIN="{{ . }}"
+B_NAME="$(basename "${SRC_BIN}")"
+cp -aL "${SRC_BIN}" "${JAIL_DIR}/usr/bin/${B_NAME}"
+chmod 755 "${JAIL_DIR}/usr/bin/${B_NAME}"
+{{- end }}
+
+TARGET_BIN="{{ .TargetBin }}"
 if [[ "${TARGET_BIN}" != "app" ]]; then
-    ln -sf "${TARGET_BIN}" "${JAIL_DIR}/bin/app"
+    ln -sfn "${TARGET_BIN}" "${JAIL_DIR}/usr/bin/app"
 fi
 
-# 7. --bind 投影
+# 6. --bind 投影
 {{- range .BindMounts }}
 if [[ -d "{{ .Src }}" ]]; then
     mkdir -p "${JAIL_DIR}/{{ .Dst }}"
@@ -69,17 +73,46 @@ else
     echo "[-] Error: Bind source does not exist: {{ .Src }}" >&2
     exit 1
 fi
-{{ if .ReadOnly }}
-mount -o remount,ro,bind "${JAIL_DIR}/{{ .Dst }}" 2>/dev/null || true
-{{ end }}
 {{- end }}
 
-echo "[*] Launching unshared containment perimeter (tmpfs: ${TMPFS_SIZE})..."
+# 7. ライブラリ群のマウント (usr/lib, lib, lib64 を完全に同一の実体にバインド)
+LIB_DIR="{{ .LibDir }}"
+if [[ -n "${LIB_DIR}" && -d "${LIB_DIR}" ]]; then
+    mount --bind "${LIB_DIR}" "${JAIL_DIR}/usr/lib"
+    mount --bind "${LIB_DIR}" "${JAIL_DIR}/lib"
+    mount --bind "${LIB_DIR}" "${JAIL_DIR}/lib64"
+    ln -sfn lib "${JAIL_DIR}/usr/lib64"
+fi
 
-# 8. chroot 実行
-unshare --mount --pid --ipc --uts --mount-proc="${JAIL_DIR}/proc" --fork \
-    env -i LD_LIBRARY_PATH=/lib:/lib64:/usr/lib PATH=/bin \
-    chroot "${JAIL_DIR}" "/bin/${TARGET_BIN}" {{ range .ExecArgs }}"{{ . }}" {{ end }} &
+# 基本シンボリックリンク
+ln -sfn usr/bin "${JAIL_DIR}/bin"
+ln -sfn usr/share "${JAIL_DIR}/share"
+
+# 8. RO remount
+{{- range .BindMounts }}
+{{- if .ReadOnly }}
+mount -o remount,ro,bind "${JAIL_DIR}/{{ .Dst }}" 2>/dev/null || true
+{{- end }}
+{{- end }}
+
+chmod 755 "${JAIL_DIR}"
+chmod -R 755 "${JAIL_DIR}/usr" "${JAIL_DIR}/etc" 2>/dev/null || true
+chmod 1777 "${JAIL_DIR}/tmp"
+
+# 9. 実行 (LD_LIBRARY_PATH にテスト1と同じ rootfs ライブラリパスを指定)
+RUN_USER="{{ .User }}"
+
+if [[ -n "${RUN_USER}" ]]; then
+    env -i LD_LIBRARY_PATH=/usr/lib:/usr/lib/postgresql PATH=/usr/bin:/bin \
+        unshare --mount --pid --ipc --uts --mount-proc="${JAIL_DIR}/proc" --fork \
+        chroot --userspec="${RUN_USER}" "${JAIL_DIR}" \
+        "/usr/bin/${TARGET_BIN}" {{ range .ExecArgs }}"{{ . }}" {{ end }} &
+else
+    env -i LD_LIBRARY_PATH=/usr/lib:/usr/lib/postgresql PATH=/usr/bin:/bin \
+        unshare --mount --pid --ipc --uts --mount-proc="${JAIL_DIR}/proc" --fork \
+        chroot "${JAIL_DIR}" \
+        "/usr/bin/${TARGET_BIN}" {{ range .ExecArgs }}"{{ . }}" {{ end }} &
+fi
 
 CHILD_PID=$!
 wait "${CHILD_PID}" 2>/dev/null || true

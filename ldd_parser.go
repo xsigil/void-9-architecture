@@ -169,6 +169,7 @@ func ResolveAndCollectLibraries(execPath, targetLibDir string) error {
 
 	lines := strings.Split(string(out), "\n")
 	collected := make(map[string]bool)
+	hasGlibc := false
 
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
@@ -186,6 +187,10 @@ func ResolveAndCollectLibraries(execPath, targetLibDir string) error {
 			continue
 		}
 
+		if strings.Contains(filepath.Base(lib.RealPath), "libc.so") {
+			hasGlibc = true
+		}
+
 		if collected[lib.RealPath] {
 			continue
 		}
@@ -196,12 +201,41 @@ func ResolveAndCollectLibraries(execPath, targetLibDir string) error {
 		}
 	}
 
+	// glibc を使用している場合、実行時の NSS (Name Service Switch / getpwuid) 用共有ライブラリを自動収集
+	if hasGlibc {
+		patterns := []string{
+			"/usr/lib*/libnss_files.so*",
+			"/usr/lib*/libnss_compat.so*",
+			"/lib*/libnss_files.so*",
+			"/lib*/libnss_compat.so*",
+			"/lib/*-linux-gnu/libnss_files.so*",
+			"/lib/*-linux-gnu/libnss_compat.so*",
+		}
+
+		for _, pat := range patterns {
+			matches, _ := filepath.Glob(pat)
+			for _, m := range matches {
+				realPath, err := filepath.Abs(m)
+				if err != nil || collected[realPath] {
+					continue
+				}
+				collected[realPath] = true
+				nssLib := &ParsedLibrary{
+					Name:     filepath.Base(realPath),
+					RealPath: realPath,
+				}
+				if err := copyLibraryIncremental(nssLib, targetLibDir); err != nil {
+					fmt.Fprintf(os.Stderr, "  [!] warning: failed to copy nss module %s: %v\n", realPath, err)
+				}
+			}
+		}
+	}
+
 	return nil
 }
 
 // copyLibraryIncremental 実体ファイルとシンボリックリンク関係を保持してインクリメンタルコピー
 func copyLibraryIncremental(lib *ParsedLibrary, targetLibDir string) error {
-	// 元の絶対パス構造を維持してコピー (例: <libDir>/lib/x86_64-linux-gnu/...)
 	destRel := strings.TrimPrefix(lib.RealPath, "/")
 	destPath := filepath.Join(targetLibDir, destRel)
 
@@ -209,14 +243,12 @@ func copyLibraryIncremental(lib *ParsedLibrary, targetLibDir string) error {
 		return err
 	}
 
-	// 既に存在していればスキップ (インクリメンタル)
 	if info, err := os.Lstat(destPath); err == nil {
 		if !info.IsDir() {
 			return nil
 		}
 	}
 
-	// シンボリックリンクのチェック
 	fi, err := os.Lstat(lib.RealPath)
 	if err != nil {
 		return err
@@ -228,7 +260,6 @@ func copyLibraryIncremental(lib *ParsedLibrary, targetLibDir string) error {
 			return err
 		}
 
-		// リンク先の実体パスを解決して再帰的にコピー
 		var resolvedTarget string
 		if filepath.IsAbs(linkTarget) {
 			resolvedTarget = linkTarget
@@ -236,7 +267,6 @@ func copyLibraryIncremental(lib *ParsedLibrary, targetLibDir string) error {
 			resolvedTarget = filepath.Clean(filepath.Join(filepath.Dir(lib.RealPath), linkTarget))
 		}
 
-		// 実体のコピー
 		subLib := &ParsedLibrary{
 			Name:     filepath.Base(resolvedTarget),
 			RealPath: resolvedTarget,
@@ -245,7 +275,6 @@ func copyLibraryIncremental(lib *ParsedLibrary, targetLibDir string) error {
 			return err
 		}
 
-		// シンボリックリンクの作成
 		_ = os.Remove(destPath)
 		if err := os.Symlink(linkTarget, destPath); err != nil {
 			return err
@@ -254,7 +283,6 @@ func copyLibraryIncremental(lib *ParsedLibrary, targetLibDir string) error {
 		return nil
 	}
 
-	// 通常ファイルの実体コピー
 	if err := copyFile(lib.RealPath, destPath); err != nil {
 		return err
 	}

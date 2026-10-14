@@ -280,7 +280,7 @@ func RunPkg(args []string) error {
 	fmt.Println("[+] All dependent packages merged into rootfs successfully.")
 
 	// 2. rootfs 内の lib ディレクトリを作成
-	targetLibDir := filepath.Join(outDir, "lib")
+	targetLibDir := outDir
 	if err := os.MkdirAll(targetLibDir, 0755); err != nil {
 		return fmt.Errorf("failed to create lib dir: %w", err)
 	}

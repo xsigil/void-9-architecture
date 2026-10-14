@@ -9,7 +9,7 @@ func printUsage() {
 	fmt.Println("Void-9 Architecture Tool")
 	fmt.Println("Usage:")
 	fmt.Println("  void ldd <linked executable> <lib dir>")
-	fmt.Println("  void jail [-size <size>] -lib <dir> [-bind <mappings>] [--export] <binary...> [-- <args...>]")
+	fmt.Println("  void jail [-size <size>] -lib <dir> [-bind <mappings>] [--debug] [--export] <binary...> [-- <args...>]")
 	fmt.Println("  void pkg <package.pkg.tar.zst> <output-rootfs-dir>")
 	fmt.Println("  void export [--bind=<src>:<dst>[:ro],...] --lib <lib dir> --output <tarball|dir> <exec>")
 	fmt.Println("\nCommands:")

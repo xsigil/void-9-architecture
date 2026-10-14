@@ -103,12 +103,12 @@ chmod 1777 "${JAIL_DIR}/tmp"
 RUN_USER="{{ .User }}"
 
 if [[ -n "${RUN_USER}" ]]; then
-    env -i LD_LIBRARY_PATH=/usr/lib:/usr/lib/postgresql PATH=/usr/bin:/bin \
+    env -i LD_LIBRARY_PATH=/usr/lib PATH=/usr/bin:/bin \
         unshare --mount --pid --ipc --uts --mount-proc="${JAIL_DIR}/proc" --fork \
         chroot --userspec="${RUN_USER}" "${JAIL_DIR}" \
         "/usr/bin/${TARGET_BIN}" {{ range .ExecArgs }}"{{ . }}" {{ end }} &
 else
-    env -i LD_LIBRARY_PATH=/usr/lib:/usr/lib/postgresql PATH=/usr/bin:/bin \
+    env -i LD_LIBRARY_PATH=/usr/lib PATH=/usr/bin:/bin \
         unshare --mount --pid --ipc --uts --mount-proc="${JAIL_DIR}/proc" --fork \
         chroot "${JAIL_DIR}" \
         "/usr/bin/${TARGET_BIN}" {{ range .ExecArgs }}"{{ . }}" {{ end }} &

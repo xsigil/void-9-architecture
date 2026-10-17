@@ -8,6 +8,7 @@ import (
 func printUsage() {
 	fmt.Println("Void-9 Architecture Tool")
 	fmt.Println("Usage:")
+	fmt.Println("  scaffold   Generate minimal containment template / rootfs skeleton") // 追加
 	fmt.Println("  void ldd <linked executable> <lib dir>")
 	fmt.Println("  void jail [-size <size>] -lib <dir> [-bind <mappings>] [--debug] [--export] <binary...> [-- <args...>]")
 	fmt.Println("  void pkg <package.pkg.tar.zst> <output-rootfs-dir>")
@@ -50,6 +51,11 @@ func main() {
 		}
 	case "export":
 		if err := RunExport(args); err != nil {
+			fmt.Fprintf(os.Stderr, "[-] Error: %v\n", err)
+			os.Exit(1)
+		}
+	case "scaffold": // 追加
+		if err := RunScaffold(args); err != nil {
 			fmt.Fprintf(os.Stderr, "[-] Error: %v\n", err)
 			os.Exit(1)
 		}

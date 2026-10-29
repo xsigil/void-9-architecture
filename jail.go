@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 )
 
 //go:embed templates/jail.sh.tmpl
@@ -228,6 +229,12 @@ func RunJail(args []string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
+	// 1. プロセスグループを独立させ、親プロセス終了時にカーネルが子を即座に連動終了させる
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setpgid:   true,
+		Pdeathsig: syscall.SIGKILL,
+	}
+
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sigChan)
@@ -236,5 +243,23 @@ func RunJail(args []string) error {
 		return err
 	}
 
-	return cmd.Wait()
+	// 2. シグナル転送: Ctrl+C / SIGTERM をプロセスグループ全体 (-PID) へカスケード送信
+	go func() {
+		sig, ok := <-sigChan
+		if !ok || cmd.Process == nil {
+			return
+		}
+		_ = syscall.Kill(-cmd.Process.Pid, sig.(syscall.Signal))
+		time.Sleep(500 * time.Millisecond)
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}()
+
+	err = cmd.Wait()
+
+	// 3. 終了時に残存している子プロセスグループを完全抹殺
+	if cmd.Process != nil {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+
+	return err
 }

@@ -40,17 +40,11 @@ deb: build
 		cp -r templates "$(DEB_DIR)$(PREFIX)/share/void-9/"; \
 	fi
 	@printf "[*] Writing package control file...\n"
-	@cat <<-'EOF' > "$(DEB_DIR)/DEBIAN/control"
-	Package: void-9
-	Version: $(VERSION)
-	Section: utils
-	Priority: optional
-	Architecture: $(ARCH)
-	Maintainer: Section 9 Architecture <support@section-9.sh>
-	Description: Minimalist containerless isolation & packaging primitive
-	 Linux namespace, pivot_root, and bind-mount ephemeral jail execution tool.
-	EOF
+	@printf "Package: void-9\nVersion: %s\nSection: utils\nPriority: optional\nArchitecture: %s\nMaintainer: Section 9 Architecture <support@section-9.sh>\nDescription: Minimalist containerless isolation & packaging primitive\n Linux namespace, pivot_root, and bind-mount ephemeral jail execution tool.\n" "$(VERSION)" "$(ARCH)" > "$(DEB_DIR)/DEBIAN/control"
+	@# 特殊ビット(setgid/setuid)を再帰的に完全除去し、dpkg-debの厳格パーミッション要件(0755)に適合化
+	@chmod -R -s "$(DEB_DIR)"
 	@find "$(DEB_DIR)" -type d -exec chmod 0755 {} +
+	@chmod 0644 "$(DEB_DIR)/DEBIAN/control"
 	@mkdir -p "$(DIST_DIR)"
 	@dpkg-deb --build --root-owner-group "$(DEB_DIR)" "$(DEB_FILE)"
 	@printf "[+] Debian package generated: %s (%s)\n" "$(DEB_FILE)" "$$(du -h $(DEB_FILE) | cut -f1)"
